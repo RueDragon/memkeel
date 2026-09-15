@@ -1,0 +1,1029 @@
+/* Agent Memory console.
+   Design system: Ant Design 5 owns components; this file owns the shell, the surface
+   language and the motion. Direction chosen per the taste skills: a dense enterprise
+   console, so this takes the parts of the premium vocabulary that survive real data
+   (type, tabular numerics, double-bezel surfaces, tinted light, spring-eased motion)
+   and rejects the parts that would hurt a tool (no hero, no imagery, no layout swaps). */
+
+:root {
+  /* One neutral family (cool), one accent, tuned below 80% saturation. */
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #fafbfc;
+  --surface-sunken: #eef0f3;
+  --ink: #16181d;
+  --ink-2: #3d434e;
+  --ink-3: #667085;
+  --ink-4: #98a2b3;
+  --line: #e4e7ec;
+  --line-soft: #eef0f3;
+  --accent: #2f6fdb;
+  --accent-hover: #255ec4;
+  --accent-soft: #eaf1fd;
+  --danger: #c9372c;
+
+  --radius-lg: 18px;
+  --radius: 12px;
+  --radius-sm: 8px;
+
+  /* Shadows carry the background hue rather than pure black. */
+  --shadow-sm: 0 1px 2px rgba(22, 24, 29, .05);
+  --shadow: 0 1px 3px rgba(22, 24, 29, .06), 0 8px 24px -16px rgba(31, 55, 98, .22);
+  --shadow-lg: 0 2px 6px rgba(22, 24, 29, .06), 0 24px 48px -24px rgba(31, 55, 98, .28);
+  --ring: 0 0 0 3px rgba(47, 111, 219, .22);
+
+  /* Custom easing: no linear, no default ease-in-out. */
+  --ease-out: cubic-bezier(.32, .72, 0, 1);
+  --ease-spring: cubic-bezier(.34, 1.4, .44, 1);
+
+  --font: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Numbers must not shift column width as they change. */
+.ant-statistic-content-value,
+.stat-card .value,
+.ant-table-cell,
+.statistic-value,
+.mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Visible keyboard focus for the console's own interactive elements. Inputs are
+   excluded because Ant Design already styles their focus, and an antd <input> always
+   matches :focus-visible on mouse click: painting this ring on the pagination size
+   changer's inner search input drew a stray rounded blue box over its label. */
+:focus-visible:not(input):not(textarea):not(select) {
+  outline: none; box-shadow: var(--ring); border-radius: var(--radius-sm);
+}
+
+/* Sidebar ------------------------------------------------------------------ */
+.app-sider {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: auto;
+  background: var(--surface);
+  border-right: 1px solid var(--line-soft);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 18px 18px 14px;
+}
+.brand-mark {
+  width: 34px; height: 34px; border-radius: 10px;
+  background: linear-gradient(150deg, #3d7ee8, #255ec4);
+  color: #fff; display: grid; place-items: center;
+  font-weight: 650; font-size: 12.5px; letter-spacing: .04em;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 2px 6px rgba(37,94,196,.28);
+}
+.brand-title { font-weight: 600; font-size: 14px; line-height: 1.2; letter-spacing: -.01em; }
+.brand-sub { color: var(--ink-4); font-size: 11.5px; }
+
+/* Floating glass command header (sticky, so backdrop-blur is allowed here). */
+.app-header {
+  height: 60px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, .82);
+  backdrop-filter: saturate(180%) blur(16px);
+  border-bottom: 1px solid var(--line-soft);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+/* The header carries the page title and its description in compact type, so every
+   page starts with its data instead of repeating a page head inside the content. */
+.header-left { flex: 1 1 auto; min-width: 0; }
+.header-title {
+  font-size: 13.5px; font-weight: 620; letter-spacing: -.012em;
+  line-height: 1.25; color: var(--ink);
+}
+.header-desc {
+  margin-top: 2px;
+  color: var(--ink-3); font-size: 11.5px; line-height: 1.4;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.header-right { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; }
+.search-box { width: 280px; }
+.kbd {
+  font-family: var(--mono);
+  font-size: 11px; color: var(--ink-4);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 1px 6px; background: var(--surface-2);
+}
+
+.app-content { padding: 22px 24px 56px; }
+
+.center-box { height: 60vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+
+/* Surface card: the shell itself is the white card, so a short child in a tall grid
+   row still leaves a fully white panel instead of a sunken strip underneath. */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 6px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* Card interior owns the padding so every child keeps its top/bottom breathing room. */
+.panel > * {
+  padding: 14px 16px;
+  min-height: 0;
+  box-sizing: border-box;
+}
+.panel > .panel-title,
+.panel > h3.panel-title {
+  margin: 0;
+  padding: 15px 16px 11px;
+  font-size: 13.5px;
+  font-weight: 620;
+  letter-spacing: -.01em;
+  flex: 0 0 auto;
+}
+/* Body of a panel owns the remaining height so lists and charts do not leave an
+   unpainted strip, while the child keeps its own bottom inset. */
+.panel > .habit-preview,
+.panel > .ant-table-wrapper,
+.panel > .echarts-for-react,
+.panel > div[style] {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* ECharts renders an absolutely-positioned canvas; center it in its own box and keep
+   a real bottom inset so the chart never sits flush against the card edge. */
+.panel > .echarts-for-react {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 18px;
+}
+.panel > .echarts-for-react > div { flex: 0 0 auto; }
+/* A table panel adds its own table padding, so the core only needs the header gap. */
+.panel > div:has(.ant-table-wrapper) { padding: 12px 14px 14px; }
+.panel > div > .ant-table-wrapper > .ant-table { border-radius: 10px; }
+
+/* Stats -------------------------------------------------------------------- */
+/* Six overview metrics: prefer 3 or 6 per row so no card is left orphaned on its
+   own row. Falls to 2 columns on tablets and 1 on phones. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (min-width: 1500px) { .stat-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+@media (max-width: 900px) { .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .stat-grid { grid-template-columns: 1fr; } }
+.stat-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 15px 17px;
+  box-shadow: var(--shadow-sm);
+  transition: transform .45s var(--ease-out), box-shadow .45s var(--ease-out), border-color .45s var(--ease-out);
+}
+.stat-card .label { color: var(--ink-3); font-size: 12.5px; letter-spacing: .002em; }
+.stat-card .value {
+  font-size: 27px; font-weight: 620; letter-spacing: -.025em;
+  line-height: 1.15; margin-top: 3px;
+}
+.stat-card .foot { color: var(--ink-4); font-size: 11.5px; margin-top: 3px; }
+.stat-card.alert { border-color: rgba(201, 55, 44, .28); }
+.stat-card.alert .value { color: var(--danger); }
+
+/* Spotlight-ish hover on interactive stats: a tinted shadow, a raised card, and a
+   light sweep that follows the surface rather than a flat colour change. */
+.stat-card.clickable {
+  text-align: left; cursor: pointer; font: inherit;
+  overflow: hidden;
+}
+.stat-card.clickable::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(120px 80px at var(--mx, 50%) var(--my, 0%), rgba(47,111,219,.10), transparent 70%);
+  opacity: 0;
+  transition: opacity .5s var(--ease-out);
+  pointer-events: none;
+}
+.stat-card.clickable:hover {
+  transform: translateY(-2px);
+  border-color: rgba(47, 111, 219, .35);
+  box-shadow: var(--shadow), 0 18px 40px -24px rgba(47, 111, 219, .45);
+}
+.stat-card.clickable:hover::after { opacity: 1; }
+.stat-card.clickable:active { transform: translateY(0) scale(.995); transition-duration: .12s; }
+.stat-card.clickable.alert:hover { border-color: rgba(201, 55, 44, .4); }
+
+.chart-grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 12px; margin-top: 12px; }
+@media (max-width: 1024px) { .chart-grid { grid-template-columns: 1fr; } }
+
+.mono { font-family: var(--mono); font-size: 12px; }
+.muted { color: var(--ink-4); }
+.nowrap { white-space: nowrap; }
+.row-clickable { cursor: pointer; }
+
+/* Tables ------------------------------------------------------------------- */
+.ant-table { font-variant-numeric: tabular-nums; }
+.ant-table-cell { font-size: 13px; }
+.ant-table-cell .ant-tag { white-space: normal; overflow-wrap: anywhere; max-width: 100%; margin-inline-end: 0; }
+.ant-table-tbody > tr.row-clickable { transition: background .3s var(--ease-out); }
+.ant-table-tbody > tr.row-clickable:hover > td { background: var(--accent-soft) !important; }
+
+/* Detail drawer ------------------------------------------------------------ */
+.detail-grid {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 9px 14px;
+  font-size: 13px;
+}
+.detail-grid dt { color: var(--ink-3); white-space: nowrap; padding-top: 1px; }
+.detail-grid dd { margin: 0; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.detail-value { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+
+.json-block {
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 340px;
+  overflow: auto;
+}
+
+/* Conflict detail: two sides side by side. */
+/* Revision history in the detail drawer: one row per superseding event, oldest first.
+   The newest entry is accented so the current value is obvious at a glance. */
+.revision-list { display: flex; flex-direction: column; gap: 8px; }
+.revision-item { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--paper); }
+.revision-item--current { border-left: 3px solid var(--accent, #2f6feb); }
+.revision-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.revision-item p { margin: 0 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.conflict-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 560px) { .conflict-sides { grid-template-columns: 1fr; } }
+.conflict-side {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 13px;
+  background: var(--surface-2);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7);
+}
+.conflict-side p { margin: 7px 0 10px; font-size: 13px; line-height: 1.65; }
+.conflict-head { font-size: 11.5px; color: var(--ink-3); font-weight: 620; letter-spacing: .01em; }
+
+/* Overview preview lists --------------------------------------------------- */
+.habit-preview { list-style: none; margin: 0; padding: 0; }
+.habit-preview li {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 9px 7px; border-bottom: 1px solid var(--line-soft);
+  cursor: pointer; font-size: 13px;
+  transition: background .3s var(--ease-out), padding-left .3s var(--ease-out);
+}
+.habit-preview li:last-child { border-bottom: none; }
+.habit-preview li:hover { background: var(--accent-soft); padding-left: 11px; }
+.habit-preview li .ant-tag { flex: 0 0 auto; margin-inline-end: 0; white-space: normal; max-width: 150px; }
+.habit-preview li.more { color: var(--accent); }
+/* Recent-event rows: the derived summary is the point of the row, so it takes the free
+   space and clamps to two lines instead of pushing the timestamp out of the panel. */
+.habit-preview li .event-preview {
+  flex: 1 1 auto; min-width: 0;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; line-height: 1.55;
+}
+.habit-preview li > .nowrap { flex: 0 0 auto; }
+
+/* Staggered entry: content resolves rather than appearing. */
+@keyframes am-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.view-enter > * {
+  animation: am-rise .5s var(--ease-out) both;
+}
+.view-enter > *:nth-child(2) { animation-delay: .04s; }
+.view-enter > *:nth-child(3) { animation-delay: .08s; }
+.view-enter > *:nth-child(4) { animation-delay: .12s; }
+.view-enter > *:nth-child(5) { animation-delay: .16s; }
+.view-enter > *:nth-child(6) { animation-delay: .20s; }
+
+/* Skeleton loader matching the panel shape instead of a bare spinner. */
+.skeleton-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 18px;
+  box-shadow: var(--shadow-sm);
+}
+.skeleton-line {
+  height: 12px; border-radius: 6px;
+  background: linear-gradient(90deg, var(--surface-sunken) 25%, #f6f7f9 50%, var(--surface-sunken) 75%);
+  background-size: 200% 100%;
+  animation: am-shimmer 1.4s linear infinite;
+}
+@keyframes am-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* Respect users who ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+}
+/* ---------------------------------------------------------------------------
+   Scroll architecture: the app shell is exactly viewport height and never
+   scrolls. Only the content pane scrolls, so the header and sidebar stay fixed.
+   --------------------------------------------------------------------------- */
+html, body, #root { height: 100%; overflow: hidden; }
+.app-shell { height: 100vh; overflow: hidden; }
+.app-sider { height: 100vh; }
+.app-content {
+  height: calc(100vh - 60px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 22px 24px 48px;
+}
+.device-phone .app-content { height: calc(100vh - 60px); }
+
+/* List views: the page itself must not scroll. The table body becomes the only
+   scroll container, so the fixed header area stays put and the wheel stays inside
+   the grid. Overview (no in-page table) still uses the content pane scroll. */
+.app-content:has(.table-view) {
+  overflow: hidden;
+  padding-bottom: 20px;
+}
+.table-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.table-view > .panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.table-view > .panel > div {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* antd Space is also a direct div child, but it is a control row, not the panel body:
+   the rule above would make it a growing flex column and stack its buttons (待办
+   未完成/已完成). Keep it auto-height and horizontal. Do not widen the selector above
+   with :not() instead, its specificity is what lets the .session-layout override win. */
+.table-view > .panel > .ant-space {
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+}
+.table-view .ant-table-wrapper { min-height: 0; }
+.table-view .ant-spin-nested-loading,
+.table-view .ant-spin-container { min-height: 0; }
+.table-view .ant-table-body {
+  scrollbar-gutter: stable;
+}
+
+/* Detail modal: fixed height with an internal scroll, so a long event scrolls inside
+   the dialog instead of growing past the viewport. */
+.detail-modal .ant-modal-content { padding: 0; overflow: hidden; }
+.detail-modal .ant-modal-header { padding: 16px 20px 12px; margin: 0; border-bottom: 1px solid var(--line-soft); }
+.detail-modal .ant-modal-body {
+  max-height: min(70vh, 620px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px 20px 20px;
+}
+.detail-modal .ant-modal-close { top: 14px; inset-inline-end: 14px; }
+
+/* Long values must wrap inside the dialog. Nothing here may set nowrap. */
+.detail-modal .detail-grid { grid-template-columns: 88px minmax(0, 1fr); }
+.detail-modal .detail-grid dd { min-width: 0; }
+
+.value-list { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.json-block--item { margin: 0; max-height: 220px; }
+
+.value-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.value-chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Ant Tag never wraps by default; force it inside the detail modal so a long
+   single-value tag cannot push the row past the edge. */
+.detail-modal .ant-tag {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+  height: auto;
+  line-height: 1.6;
+  padding-block: 1px;
+}
+
+/* ---- Sessions: conversation replay (two-pane) ---- */
+.session-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.session-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 12px 0;
+  border-right: 1px solid var(--line-soft);
+}
+.session-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 12px;
+  scrollbar-gutter: stable;
+}
+.session-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: inherit;
+  font: inherit;
+  transition: border-color .15s, background .15s;
+}
+.session-item:hover { border-color: var(--accent, #4b8bf5); }
+.session-item.selected {
+  border-color: var(--accent, #4b8bf5);
+  background: color-mix(in srgb, var(--accent, #4b8bf5) 10%, transparent);
+}
+.session-item-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  min-width: 0;
+}
+.session-item-top .muted {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-time { margin-left: auto; flex: none; font-size: 11.5px; }
+.session-item-summary {
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+.session-item-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11.5px;
+  color: var(--text-soft);
+}
+.danger-text { color: var(--danger, #d4380d); }
+
+.session-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px 22px;
+  scrollbar-gutter: stable;
+}
+.session-detail-head { margin-bottom: 14px; }
+.session-detail-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+.session-detail-title strong {
+  font-family: var(--mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.session-detail-sub {
+  font-size: 12px;
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+.session-detail-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 12px;
+  padding: 8px 10px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+.session-block {
+  margin-bottom: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-width: 0;
+}
+.session-block.danger { border-color: var(--danger, #d4380d); }
+.session-block h4, .session-turns h4 {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: var(--text-soft);
+  font-weight: 600;
+}
+.session-block pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-size: 12.5px;
+  line-height: 1.6;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.session-turns {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.session-turn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: inherit;
+  font: inherit;
+}
+.session-turn:hover { border-color: var(--accent, #4b8bf5); }
+.session-turn-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 5px;
+  font-size: 11.5px;
+}
+.session-turn-task {
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+.session-turn-text {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-soft);
+  overflow-wrap: anywhere;
+}
+.session-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+
+@media (max-width: 900px) {
+  .session-layout { grid-template-columns: 1fr; }
+  .session-rail {
+    border-right: none;
+    border-bottom: 1px solid var(--line-soft);
+    max-height: 42vh;
+  }
+}
+
+/* Sessions view overrides: the shared .table-view rules force panel children into a
+   flex column and add 14/16 padding, which stacked the two-pane layout and let it grow
+   unbounded. Restore the grid and let each pane own its own scroll region. */
+.table-view > .panel > .session-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.table-view > .panel > .session-layout > .session-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.table-view > .panel > .session-layout > .session-detail {
+  min-height: 0;
+  overflow-y: auto;
+}
+@media (max-width: 900px) {
+  .table-view > .panel > .session-layout { grid-template-columns: 1fr; }
+}
+
+/* The animated view wrapper sits between .app-content (fixed height) and .table-view.
+   Without an explicit height it is an auto-height block, so .table-view { height:100% }
+   resolved against auto and the whole page grew past the viewport. Bound the wrapper
+   and make it a flex column so its child can fill and own the internal scroll. */
+.app-content:has(.table-view) > .view-enter {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* .app-content uses content-box, so its fixed height plus 22/48px padding overflowed the
+   shell and forced an outer scrollbar. Make the height include the padding. */
+.app-content {
+  box-sizing: border-box;
+}
+/* The rail filter block stays fixed while only the session list scrolls. */
+.session-rail > .ant-segmented,
+.session-rail > .ant-input-affix-wrapper {
+  flex: 0 0 auto;
+}
+.session-list {
+  padding-top: 2px;
+}
+
+
+/* Markdown rendering for agent replies and checkpoint bodies. Memory text is
+   untrusted Markdown, so every element is styled explicitly and long content is
+   clamped/scrollable instead of expanding the surrounding card without bound. */
+.md-body {
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.md-body > :first-child { margin-top: 0; }
+.md-body > :last-child { margin-bottom: 0; }
+.md-body p { margin: 0 0 8px; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6 {
+  margin: 12px 0 6px;
+  font-weight: 640;
+  line-height: 1.4;
+}
+.md-body h1 { font-size: 16px; }
+.md-body h2 { font-size: 15px; }
+.md-body h3 { font-size: 14px; }
+.md-body h4, .md-body h5, .md-body h6 { font-size: 13px; }
+.md-body ul, .md-body ol { margin: 0 0 8px; padding-left: 20px; }
+.md-body li { margin: 2px 0; }
+.md-body li > p { margin: 0; }
+.md-body code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+.md-body pre {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  overflow-x: auto;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.md-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  white-space: pre;
+}
+.md-body blockquote {
+  margin: 0 0 8px;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--line);
+  color: var(--text-soft);
+}
+.md-body a { color: var(--accent, #4b8bf5); text-decoration: underline; }
+.md-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 8px;
+  font-size: 12px;
+  display: block;
+  overflow-x: auto;
+}
+.md-body th, .md-body td {
+  border: 1px solid var(--line-soft);
+  padding: 5px 8px;
+  text-align: left;
+}
+.md-body th { background: var(--surface-sunken); font-weight: 620; }
+.md-body hr { border: none; border-top: 1px solid var(--line-soft); margin: 12px 0; }
+.md-body img { max-width: 100%; height: auto; border-radius: 6px; }
+.md-body input[type="checkbox"] { margin-right: 6px; }
+
+/* Inside a checkpoint card the rendered Markdown is a summary, so cap its height and
+   keep the card clickable through to the detail modal. */
+.session-turn-text .md-body {
+  max-height: 132px;
+  overflow: hidden;
+  position: relative;
+}
+.session-turn-text .md-body::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 28px;
+  background: linear-gradient(to bottom, transparent, var(--surface-sunken));
+  pointer-events: none;
+}
+
+/* Session replay is a chat transcript: user requests align right, agent replies align
+   left. Each bubble is a button so the whole message opens its raw event detail. */
+.chat-exchange {
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px dashed var(--line-soft);
+}
+.chat-exchange:last-child { border-bottom: none; margin-bottom: 0; }
+.chat-exchange-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 11.5px;
+}
+.chat-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+  min-width: 0;
+}
+.chat-row--user { justify-content: flex-end; }
+.chat-row--agent { justify-content: flex-start; }
+.chat-avatar {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 620;
+  color: #fff;
+  background: #4b8bf5;
+  user-select: none;
+}
+.chat-avatar--agent {
+  background: var(--surface-sunken);
+  color: var(--text-soft);
+  border: 1px solid var(--line-soft);
+  font-size: 9.5px;
+  text-transform: lowercase;
+  overflow: hidden;
+}
+.chat-bubble {
+  display: block;
+  max-width: min(82%, 760px);
+  min-width: 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line-soft);
+  background: var(--surface-sunken);
+  color: inherit;
+  transition: border-color .15s, box-shadow .15s;
+}
+.chat-bubble:hover { border-color: var(--accent, #4b8bf5); box-shadow: var(--shadow-sm); }
+.chat-bubble--user {
+  background: color-mix(in srgb, #4b8bf5 12%, transparent);
+  border-color: color-mix(in srgb, #4b8bf5 32%, transparent);
+  border-bottom-right-radius: 4px;
+}
+.chat-bubble--agent {
+  border-bottom-left-radius: 4px;
+}
+.chat-bubble .md-body { font-size: 12.5px; }
+.chat-bubble .md-body > :last-child { margin-bottom: 0; }
+/* The latest unverified reply can be long; keep it readable but bounded. */
+.chat-bubble--agent .md-body pre { max-height: 260px; }
+.session-raw {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Detail modal chat transcript: bubbles are not clickable here, they are the record. */
+.detail-chat { margin-bottom: 16px; }
+.chat-bubble--static { cursor: default; }
+.chat-bubble--static:hover { border-color: var(--line-soft); box-shadow: none; }
+.detail-modal .chat-bubble { max-width: min(88%, 520px); }
+.detail-modal .chat-exchange { margin-bottom: 14px; padding-bottom: 10px; }
+
+/* Chat width balance: keep bubbles from spanning the full pane so the left/right
+   alignment reads as a conversation. Tables and code still get the wider share. */
+.session-detail .chat-bubble { max-width: min(74%, 720px); }
+.session-detail .chat-bubble--user { max-width: min(64%, 560px); }
+.detail-modal .chat-bubble { max-width: min(80%, 480px); }
+
+/* Keep the modal transcript from filling the whole dialog: the chat area scrolls on
+   its own so the metadata grid below stays reachable. */
+.detail-chat {
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+/* Table-cell transcript preview: the same request/reply split as the detail modal, but
+   clamped to two lines per side so one checkpoint row stays scannable instead of
+   wrapping a kilobyte of prompt text. The full text is still in the row's detail modal. */
+.cell-chat { display: flex; flex-direction: column; gap: 3px; }
+.cell-chat-line { display: flex; align-items: flex-start; gap: 6px; }
+.cell-chat-who {
+  flex: 0 0 auto; min-width: 24px;
+  font-size: 11px; line-height: 1.65; color: var(--ink-4);
+}
+.cell-chat-who--agent { color: var(--accent); }
+.cell-chat-text {
+  flex: 1 1 auto; min-width: 0;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; font-size: 12.5px; line-height: 1.65;
+}
+.cell-chat-text--agent { color: var(--ink-2); }
+
+/* Scroll-to-top affordance for a pane that opens at its end (对话回溯 selects a session
+   and scrolls to the newest checkpoint). It is the last child of the scroll container,
+   so `position: sticky; bottom` keeps it pinned to the bottom-right of what is visible;
+   the component renders it only once the pane is scrolled away from the top. */
+.scroll-top {
+  position: sticky;
+  bottom: 10px;
+  z-index: 3;
+  margin: 8px 2px 0 auto;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink-3);
+  box-shadow: var(--shadow);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color .16s var(--ease-out), border-color .16s var(--ease-out), transform .16s var(--ease-out);
+}
+.scroll-top:hover { color: var(--accent); border-color: var(--accent); transform: translateY(-1px); }
+.scroll-top:active { transform: none; }
+
+/* Session tabs: summary vs the host's real transcript. */
+.session-tabs { margin-bottom: 4px; }
+.session-tabs .ant-tabs-nav { margin-bottom: 12px; }
+.transcript-source {
+  display: block;
+  font-size: 11.5px;
+  margin-bottom: 10px;
+  overflow-wrap: anywhere;
+}
+.transcript-stream {
+  max-height: none;
+}
+.transcript-stream .chat-bubble { max-width: min(74%, 720px); }
+.transcript-stream .chat-bubble--user { max-width: min(64%, 560px); }
+
+/* The sidebar card names the session by its opening message, so the label makes the
+   difference from a "latest reply" headline explicit. */
+.session-item-first {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: var(--text-soft);
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  vertical-align: 1px;
+}
+.session-first-task {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, #4b8bf5 8%, transparent);
+  border: 1px solid color-mix(in srgb, #4b8bf5 24%, transparent);
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.session-first-label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-soft);
+}
+
+/* Write-confirmation modal: a plan has to read as a decision, not as a status diff. Each
+   question gets its own labelled block — what am I deciding on, what happens afterwards,
+   and what do I have to supply. */
+.decision-section { margin-top: 16px; }
+.decision-section-title { font-size: 12.5px; font-weight: 620; letter-spacing: -.01em; margin-bottom: 6px; }
+.decision-section-hint { font-size: 12px; color: var(--ink-3); line-height: 1.6; }
+.decision-section-hint--warn { color: var(--danger); margin-top: 6px; }
+.decision-subject {
+  font-size: 13px; line-height: 1.6; overflow-wrap: anywhere;
+  padding: 10px 12px; border-radius: 8px;
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+}
+.decision-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; }
+.decision-meta-item { color: var(--ink-2); }
+.decision-effects { margin: 0; padding-left: 18px; }
+.decision-effects li { font-size: 12.5px; line-height: 1.65; color: var(--ink-2); }
+.decision-changes { list-style: none; margin: 0; padding: 0; }
+.decision-changes li {
+  font-size: 12px; color: var(--ink-2);
+  padding: 5px 0; border-bottom: 1px dashed var(--line-soft);
+}
+.decision-changes li:last-child { border-bottom: none; }
+.decision-quotes { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+/* A quote suggestion is a sentence, not a label: let it wrap and stay selectable-looking. */
+.decision-quote {
+  height: auto; padding: 6px 10px;
+  font-size: 12px; line-height: 1.5;
+  text-align: left; white-space: normal;
+}
+.decision-evidence { margin-top: 10px; }
+.decision-evidence-path { font-size: 11.5px; overflow-wrap: anywhere; }
+.decision-evidence-body {
+  margin: 6px 0 0; max-height: 170px; overflow: auto;
+  padding: 8px 10px; border-radius: 8px;
+  background: var(--surface-sunken); border: 1px solid var(--line-soft);
+  font-family: var(--font); font-size: 12px; line-height: 1.6;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+/* Settings ----------------------------------------------------------------- */
+/* One config file, three editable groups: the action bar sits between the groups the
+   page edits and the read-only health checks below them. */
+.settings-actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  margin: 14px 2px 20px;
+}
+.settings-paths {
+  list-style: none; margin: 8px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.settings-paths li { font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.settings-restart-list { margin: 10px 0; padding-left: 18px; }
+.settings-restart-list li { font-size: 12.5px; line-height: 1.7; color: var(--ink-2); }
+.settings-details { margin-top: 10px; }
+.settings-details > summary { cursor: pointer; font-size: 12px; }

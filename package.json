@@ -1,0 +1,74 @@
+{
+  "name": "memkeel",
+  "version": "1.0.0",
+  "description": "Local-first agent memory ledger shared by Codex, Claude Code, ZCode and dsh. Markdown is the source of truth; every memory is an immutable, evidence-backed event.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "bin": {
+    "memkeel": "bin/memkeel.mjs"
+  },
+  "exports": {
+    ".": "./lib/core.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "README.zh-CN.md",
+    "bin/",
+    "lib/",
+    "scripts/",
+    "examples/",
+    "vendor/",
+    "dashboard/static/",
+    "dashboard.mjs",
+    "memory.mjs",
+    "mcp-server.mjs",
+    "hook-runner.mjs",
+    "dsh-memory-plugin.mjs",
+    "integrate-mcp.mjs",
+    "integrate-hooks.mjs",
+    "publish.mjs",
+    "setup.mjs",
+    "config.example.json",
+    "bootstrap.md",
+    "event-schema.md",
+    "Dockerfile",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "THIRD_PARTY.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node scripts/check-syntax.mjs",
+    "leak-scan": "node scripts/leak-scan.mjs",
+    "setup": "node setup.mjs",
+    "dashboard": "node dashboard.mjs",
+    "dashboard:build": "npm --prefix dashboard/app run build",
+    "dashboard:dev": "npm --prefix dashboard/app run dev"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RueDragon/memkeel.git"
+  },
+  "homepage": "https://github.com/RueDragon/memkeel#readme",
+  "bugs": {
+    "url": "https://github.com/RueDragon/memkeel/issues"
+  },
+  "keywords": [
+    "agent-memory",
+    "mcp",
+    "codex",
+    "claude-code",
+    "zcode",
+    "dsh",
+    "markdown",
+    "obsidian",
+    "local-first",
+    "provenance",
+    "audit-trail",
+    "llm-agents"
+  ]
+}

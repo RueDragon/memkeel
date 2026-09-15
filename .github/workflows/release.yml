@@ -1,0 +1,44 @@
+name: Release
+
+# Tag-driven only. Pushing a v* tag runs the gates and creates a GitHub Release from
+# the tag with generated notes.
+#
+# NOTE: this workflow deliberately does NOT publish to npm. npm publishing is
+# deferred to a later release and is not wired up here.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: release ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: node --version
+        run: node --version
+
+      - name: test
+        run: npm test
+
+      - name: syntax check
+        run: npm run check
+
+      # Never publish a tag that contains personal data.
+      - name: leak gate
+        run: npm run leak-scan
+
+      - name: create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --verify-tag --title "${GITHUB_REF_NAME}" --generate-notes

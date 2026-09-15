@@ -1,0 +1,635 @@
+**English** | [简体中文](README.zh-CN.md)
+
+# Memkeel
+
+**A local-first memory ledger for coding agents.** Four different agent hosts share one
+plain-Markdown store where every memory is an immutable, evidence-backed event.
+
+Memkeel is not a chatbot memory widget and not a vector database. It is a small ledger
+that four coding agents — **Codex, Claude Code, ZCode and dsh** — read and write through
+one shared contract. Each memory is an append-only event recorded as JSON inside a
+Markdown note; Markdown is the source of truth; every projection the agents actually read
+(topic pages, daily digests, habit lists, action and mistake ledgers) is *derived* from
+that event journal and can be rebuilt from it. A fact never silently changes: replacing a
+value requires an explicit `supersedes` link to the event it replaces, so the store keeps
+a provenance and supersede chain for every claim, and two disagreeing claims become a
+visible conflict instead of a last-write-wins overwrite. There is no service to run, no
+database, no API key and no daemon: the whole system is Node.js and files on disk, so it
+works the same in a terminal, in an air-gapped checkout or inside a container.
+
+- **Immutable events.** Events are append-only and never edited in place.
+- **Evidence-backed.** Every event must cite at least one existing note that already exists on disk.
+- **Plain Markdown.** Any Markdown folder is a valid store. Obsidian is an optional enhancement.
+- **No service, no database.** Files, and a read-only local web console when you want one.
+- **Provenance and supersede.** `supersedes` links build a reviewable history per fact key.
+
+---
+
+## Table of contents
+
+- [Requirements](#requirements)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [The roles and layout model](#the-roles-and-layout-model)
+- [Storage backends](#storage-backends)
+- [Host integrations](#host-integrations)
+- [CLI reference](#cli-reference)
+- [The web console](#the-web-console)
+- [Native hooks](#native-hooks)
+- [The event and evidence contract](#the-event-and-evidence-contract)
+- [The shared policy block](#the-shared-policy-block)
+- [Tests and the leak gate](#tests-and-the-leak-gate)
+- [Why Obsidian (optional)](#why-obsidian-optional)
+- [Docker](#docker)
+- [Project layout](#project-layout)
+- [License and credits](#license-and-credits)
+
+---
+
+## Requirements
+
+- **Node.js >= 22.18** (`engines` in `package.json`). Node 24 is also supported.
+- A Markdown folder to act as the store. It does not have to exist yet — `memkeel init` creates it.
+- Optional: [Obsidian](https://obsidian.md) plus an `obsidian` CLI on `PATH`, only if you want the
+  `obsidian-cli` storage backend.
+- Optional: npm, only if you want the long-form `memkeel` command name instead of `node memory.mjs`.
+
+Node 22.18 or newer is enough on its own. TypeScript-typed helper files are loaded through
+Node's built-in type stripping, so **no `--experimental-strip-types` flag is required**:
+
+```console
+$ node --version
+v22.22.3
+$ node memory.mjs doctor
+```
+
+Older runtimes (for example Node 22.0–22.17) will fail to load the vendored helpers.
+
+## Install
+
+### From a clone
+
+```bash
+git clone https://github.com/RueDragon/memkeel.git
+cd memkeel
+node memory.mjs help
+```
+
+That is the entire install. Memkeel has **zero runtime npm dependencies**: the core library,
+the MCP server, the hooks, the CLI and the web server all run on the Node standard library.
+The committed web console bundle under `dashboard/static/` means you do not need to build
+anything to use it either.
+
+### As an npm package (not published yet)
+
+The package is prepared for npm, but v1.0.0 ships from GitHub and the npm release is planned
+for v1.1. Until then, install from a clone.
+
+```bash
+npm install -g memkeel   # available from v1.1
+memkeel help
+```
+
+Once installed either way you get the same program. `bin/memkeel.mjs` is a thin shim that forwards to
+`memory.mjs`, so `memkeel <command>` and `node memory.mjs <command>` are interchangeable.
+The rest of this document uses `memkeel`; substitute `node memory.mjs` if you are running
+from a clone without putting the binary on `PATH`.
+
+## Quick start
+
+Three commands take you from nothing to a working, agent-connected store.
+
+### 1. Create the store
+
+```bash
+memkeel init
+```
+
+`init` creates an empty but ready-to-use memory home: a `config.json`, the shared policy source
+(`bootstrap.md`), the event contract (`event-schema.md`), the store directory layout
+(`events/`, `topics/`, `digest/`, `projects/`) and an empty `habits.md`. It deliberately
+**does not touch any agent** — no MCP registration, no hooks, no instruction files. Run it
+before `setup`.
+
+The remaining projection notes (`actions.md`, `mistakes.md`, `candidates.md`,
+`experience.md`) are not created up front; each appears the first time consolidation has
+something to write into it. `memkeel doctor` on a freshly initialised store is healthy and
+exits zero.
+
+Point it somewhere other than the default with `--home <dir>` or by setting `MEMKEEL_HOME`.
+The default memory home is `~/.memkeel`, and the default store is created underneath it.
+
+### 2. Bind your agents
+
+```bash
+memkeel setup                       # detect installed hosts and bind the ones it finds
+memkeel setup --hosts codex,dsh     # only these hosts
+memkeel setup --dry-run             # print what would change, write nothing
+memkeel setup --check               # report drift, write nothing, exit non-zero on drift
+memkeel setup --no-hooks            # register MCP + policy, skip native hooks
+memkeel setup --uninstall           # remove the bindings and restore backups
+```
+
+`setup` registers the MCP stdio server, installs the native hooks, and publishes the shared
+policy block, for each host it finds. **Hosts that are not installed are detected and skipped
+with an explicit report** rather than failing the run.
+
+`setup` is idempotent: every write is backed up first, read back for verification, and a
+second run changes nothing. See [Host integrations](#host-integrations) for exactly which
+file each host gets.
+
+### 3. Verify
+
+```bash
+memkeel doctor
+```
+
+`doctor` reports the config path, missing expected files, pending captures, checkpoint
+health, and both writer locks (the store lock and the hook-queue lock) together with holder
+liveness. It exits non-zero when something is genuinely wrong.
+
+Then use it from any bound host, or from the shell:
+
+```bash
+memkeel bootstrap --cwd "$PWD" --query "release checklist"
+memkeel recall --query "storage backend" --workspace my-project
+```
+
+---
+
+## Configuration
+
+Memkeel reads **one JSON file**: `~/.memkeel/config.json`.
+
+- Override the directory with `--home <dir>`.
+- Override it with the `MEMKEEL_HOME` environment variable.
+- The same directory holds `bootstrap.md`, `event-schema.md`, `backups/` and `state/`.
+
+The schema is documented in full by [`config.example.json`](config.example.json). Copy it to
+`<memory home>/config.json` and edit it, or let `memkeel init` write it for you.
+
+| Key | Meaning |
+| --- | --- |
+| `version` | Config schema version. |
+| `memoryRoot` | Absolute path to the memory root (the store root). |
+| `layout` | Layout model. `neutral` is the modern default; older flat layouts are still readable. |
+| `roles` | Logical role → relative path map. See below. |
+| `storage` | `filesystem` (default) or `obsidian-cli`. |
+| `vaultRoot` | Absolute path to the Markdown store. Relative roles resolve against this. |
+| `vaultName` | Obsidian vault name. Only used by `obsidian-cli`. |
+| `obsidianCli` | Absolute path to the `obsidian` CLI. Only used by `obsidian-cli`. |
+| `policyRoot` | Absolute path to the memory home. Set automatically from `--home` / `MEMKEEL_HOME`. |
+| `activeLimit` | How many active projects the bootstrap summary lists. |
+| `recentLimit` | How many recent-change groups the bootstrap summary lists. |
+| `recentDays` | Width of the "recent changes" window in days (default 14). |
+| `budgetBytes` | Byte budget for the injected bootstrap summary (default 14000). |
+| `workspaceAliases` | Extra path aliases per workspace id, for worktrees and moved checkouts. |
+| `hook.codexDeferredAdvisoryModels` | Model patterns for which Codex tool advisories are deferred to the next prompt. |
+| `topics` | Registered topic routes: `{ id, workspace, title, aliases, path }`. |
+| `catalogTopics` | Grouping metadata used by history ingest and the topic catalog. |
+
+`config.example.json` uses documented placeholders such as `C:/Users/<you>/agent-memory` and
+`C:/Users/<you>/.memkeel`. Replace them with real paths for your machine.
+
+## The roles and layout model
+
+Code depends on **logical roles**, never on hard-coded physical paths. A role is a name such
+as `eventsRoot`; its value is a path relative to `vaultRoot`. That indirection is what lets
+the same build serve a neutral folder, an existing vault with a house style, or an
+Obsidian-specific tree, with no code changes.
+
+Default (neutral) roles:
+
+| Role | Default | Holds |
+| --- | --- | --- |
+| `root` | `''` | The store root itself. |
+| `eventsRoot` | `events` | The immutable event journal, one file per day/workspace/agent, plus `events/Evidence/`. |
+| `topicsRoot` | `topics` | Generated topic pages (current state per topic). |
+| `projectRoot` | `projects` | Workspace registry notes (`workspace-<id>.md`) and topic descriptors. |
+| `habitsNote` | `habits.md` | Confirmed habits, plus a managed block of event-confirmed rules. |
+| `actionsNote` | `actions.md` | Generated open-action ledger. |
+| `mistakesNote` | `mistakes.md` | Generated confirmed-mistake increment. |
+| `candidatesNote` | `candidates.md` | Generated pending preference candidates. |
+| `experienceNote` | `experience.md` | Generated experience / short-term-context catalog. |
+| `inboxRoot` | `digest` | Daily digests and long-form notes. |
+
+Two rules keep this safe:
+
+1. **Managed blocks only.** Generated content lives between `<!-- AUTO-MANAGED:START -->` and
+   `<!-- AUTO-MANAGED:END -->` comments. Consolidation replaces exactly that block and never
+   touches the prose around it, so you can hand-write anything else in those notes.
+2. **Journal is the write path.** Anything generated is rebuilt from the journal. Editing a
+   generated page by hand is overwritten on the next consolidation — record an event instead.
+
+A legacy flat config (top-level `eventsRoot`, `projectRoot`, `habitsNote`, `inboxRoot`, …)
+still resolves to the same role map, so existing stores keep working byte-for-byte without a
+migration.
+
+## Storage backends
+
+Every backend implements the same five verbs — `read`, `create`, `append`, `replace`,
+`verify` — so no caller ever branches on which one is active (`lib/storage/adapter.mjs`).
+`storage` selects it; when the key is absent, a configured `obsidianCli` implies
+`obsidian-cli` and otherwise `filesystem` is used.
+
+### `filesystem` (default)
+
+Plain file IO against `vaultRoot`. **Zero external dependencies**, works headless, on any OS,
+inside a container, and on a plain Markdown folder that has never seen Obsidian.
+
+- `create` refuses to overwrite an existing note, then writes and reads the bytes back.
+- `append` is exact-or-rollback: the file is read back, and any mismatch restores the previous bytes.
+- `replace` is guarded by an expected value, writes a timestamped backup under
+  `backups/replacements/` with before/after hashes, and re-checks that the target did not move
+  between preflight and write.
+
+### `obsidian-cli` (optional)
+
+Drives an installed Obsidian instance through `obsidianCli` and `vaultName`. Note content is
+still written as bytes straight to the vault path and then confirmed by reading it back
+through the CLI — the CLI is the *verification* channel, not the write channel. Exact managed
+replacements additionally generate a Git patch, preflight it with `git apply --check`, and
+only publish the verified result.
+
+Both backends share the write path described in
+[The event and evidence contract](#the-event-and-evidence-contract), including the rule that
+note content never travels through a CLI argument list.
+
+## Host integrations
+
+Memkeel speaks to four hosts: **Codex**, **Claude Code**, **ZCode** and **dsh**. `memkeel setup`
+binds a host only when its configuration directory exists, and reports every skipped host.
+
+| Host | MCP server registered in | Hooks installed in | Shared policy published to |
+| --- | --- | --- | --- |
+| Codex | `<CODEX_HOME or ~/.codex>/config.toml` → `[mcp_servers.agent_memory]` | `<codex home>/hooks.json` | `<codex home>/AGENTS.md` |
+| Claude Code | `~/.claude.json` → `mcpServers.agent_memory` | `<CLAUDE_CONFIG_DIR or ~/.claude>/settings.json` | `<claude config dir>/CLAUDE.md` (native `@`-import) |
+| ZCode | `~/.zcode/cli/config.json` → `mcp.servers.agent_memory` | `~/.zcode/cli/config.json` (`hooks.events.*`) | `~/.zcode/AGENTS.md` |
+| dsh | `~/.dsh/profiles/<profile>/cordis.patch.yml` | same file, plus `<memory home>/dsh-hooks.json` | `~/.dsh/AGENTS.md` |
+
+Notes on each:
+
+- **Codex.** `setup` writes a `[mcp_servers.agent_memory]` TOML section with the current
+  `process.execPath` and the absolute `mcp-server.mjs` path. Codex keeps its own hook trust
+  boundary; nothing bypasses it.
+- **Claude Code.** The MCP entry goes into `~/.claude.json`, and the shared policy is published
+  as a native `@`-import line inside the managed markers rather than as an inlined copy.
+- **ZCode.** The MCP entry and the hook table both live in `~/.zcode/cli/config.json`. `setup`
+  also turns the host's own built-in memory feature off (`memory.use`, `features.memory`),
+  because running both duplicates context. Only the read-only tool is pre-approved; writes go
+  through the host's normal approval flow.
+- **dsh.** MCP and hooks are injected as marked blocks in the profile's `cordis.patch.yml`,
+  one per profile that actually exists (headless / web / desktop). Hooks are provided by the
+  zero-dependency `dsh-memory-plugin.mjs` bridge so dsh shares the host's own protocol objects
+  instead of installing duplicate peer packages.
+
+MCP exposes two tools:
+
+- **`agent_memory_read`** — read-only: `help`, `status`, `bootstrap`, `recall`,
+  `experience_recall`, `context_recall`, `check_operation`. It cannot write, capture, confirm a
+  habit or execute a shell command.
+- **`agent_memory`** — purpose-limited writes: `capture`, `record`, `consolidate`,
+  `maintenance`, `register`, `habit_decide`. **Neither tool exposes a shell or arbitrary
+  file-write capability**, and neither relaxes the host sandbox.
+
+Restart an existing host session after changing hook or MCP configuration; running sessions do
+not pick up user-level entries mid-session.
+
+To undo everything, run `memkeel setup --uninstall`. It removes the MCP entries, the hook
+declarations and the policy blocks it owns, restores from `state/setup-receipt.json`, and leaves any
+configuration it does not own untouched.
+
+## CLI reference
+
+Every command takes optional `--home <dir>` to point at a different memory home.
+
+### Setup
+
+| Command | What it does |
+| --- | --- |
+| `init [--store DIR] [--obsidian-cli PATH] [--vault-name NAME]` | Create an empty, ready-to-use memory home and store: directory layout, `config.json`, the policy source, the event contract and an empty `habits.md`. Touches no agent. `--store` sets the store root; the Obsidian flags pre-fill the optional `obsidian-cli` backend. |
+| `setup [--hosts codex,claude,zcode,dsh] [--dry-run] [--check] [--no-hooks] [--uninstall] [--force]` | Bind the store into installed hosts: register the MCP server, install native hooks, publish the shared policy. `--dry-run` prints intended changes; `--check` reports drift without writing and exits non-zero on drift; `--no-hooks` skips hook installation; `--uninstall` removes the bindings and restores backups. Uninstalled hosts are detected and **skipped** with a clear report. If a host already has an `agent_memory` MCP server that points somewhere else, that host is **refused** rather than silently rebound; review it, or re-run with `--force`. |
+
+### Reading
+
+| Command | What it does |
+| --- | --- |
+| `bootstrap --cwd PATH --query TEXT [--workspace ID] [--json] [--all] [--audit]` | Startup summary: confirmed habits, active projects, recent changes, matching task guidance and live short-term context, collapsed to `budgetBytes`. Read-only; `--audit` deliberately persists diagnostics. |
+| `recall --query TEXT [--workspace ID\|NAME\|PATH] [--history]` | Topic and fact lookup. Prefers current event-backed facts, then registered canonical topics, then BM25-ranked evidence. `--history` widens to provenance and archived material. |
+| `experience-recall` / `context-recall` | Retrieve execution experience or short-term task contexts. No read ever increments usage or writes a cache. |
+| `check-operation --file INPUT.json` | Bounded static preflight for a proposed operation (kind, command, shell, cwd, boundary). Returns matched experiences and warnings — **not** permission, and not a guarantee that a command is safe. |
+| `audit` | Report the note index by type and list untyped historical sources. Historical claims require deliberate promotion. |
+| `doctor` | Health check: config and expected files, pending captures, checkpoint health, and both writer locks with holder liveness. |
+
+### Writing
+
+| Command | What it does |
+| --- | --- |
+| `register --topic WORKSPACE/KEY --workspace ID --title TEXT [--alias TEXT]` | Add a topic route. Cannot overwrite an existing topic and never promotes a historical claim. |
+| `record --file EVENT.json` \| `record --stdin` | Append one immutable event and consolidate it synchronously. |
+| `capture --file INPUT.json` \| `capture --stdin` | Take `{event, evidence_text}`, write the evidence note, record the event, consume it with readback. |
+| `habit-decide --file INPUT.json` \| `habit-decide --stdin` | Close a preference candidate as `confirmed` or `rejected` with an exact user quote that must exist in the evidence note. |
+| `consolidate` | Consume pending events and rebuild managed projections. `pending` is the remaining backlog; `pendingBefore` is the backlog at the start of the pass. |
+| `retain --candidates` / `retain --file DECISIONS.json` / `retain` | Retention ledger. `--candidates` lists undecided automatic checkpoints read-only; a decisions file applies soft drops; bare `retain` prints the ledger. |
+| `maintenance [--rebuild]` | Recover interrupted captures, drain queued checkpoints, settle weight, promote eligible candidates to *probationary*, consolidate, and refresh the index and catalog. `--rebuild` regenerates marked projections that are missing. |
+| `index [--force]` | Rebuild the incremental lexical index under the memory home. |
+| `ingest-plan [--since ISO] [--limit N] [--root DIR] [--auto-register]` | Read-only report of historical agent turns that could be backfilled. |
+| `ingest-apply [...]` | Write those historical turns as reported task contexts. |
+
+## The web console
+
+```bash
+npm run dashboard          # or: node dashboard.mjs
+# Agent Memory dashboard: http://127.0.0.1:3247
+```
+
+The console is a read-mostly local UI over the same projections the CLI and MCP use.
+**No build step is needed**, because the built bundle is committed under `dashboard/static/`.
+
+Views include facts, contexts, experiences, habits and candidates, actions, conflicts, the
+event feed, workspace routes, topics, a system/health page, and a **session replay** view that
+renders each agent session as a chronological chat transcript (user turns right, agent turns
+left, Markdown-rendered) with two tabs: the archived checkpoint summary and the host's real
+transcript. Reading a transcript is read-only and never writes to memory.
+
+Writable actions — closing an action, confirming or rejecting a preference, composing a fact,
+action, context or experience, revising or retiring an existing record — go through a two-step
+preview/execute handshake: the server returns a plan plus a token bound to the current state
+fingerprint, and execute **fails closed** if the journal moved in between. Every revision is an
+append carrying `supersedes`, so the console never edits Markdown directly.
+
+The server binds to **loopback only** (`127.0.0.1`) and takes `--port` to override the port.
+
+Contributors changing the frontend rebuild the bundle:
+
+```bash
+npm --prefix dashboard/app install
+npm run dashboard:build    # writes dashboard/static/
+npm run dashboard:dev      # Vite dev server proxying /api to the running console
+```
+
+## Native hooks
+
+`setup` installs hooks for every supported host so memory works without being asked. The
+runner is `hook-runner.mjs`, invoked by the host with a JSON payload on stdin. Events and what
+they do:
+
+| Event | Behaviour |
+| --- | --- |
+| `SessionStart` | Injects the first bootstrap summary once per session. |
+| `UserPromptSubmit` | Injects up to four long-term facts relevant to the prompt, plus matching short-term contexts, experiences and queued checkpoints; performs the first bootstrap synchronously where a host's `SessionStart` seam is detached. |
+| `PreToolUse` | Runs the bounded execution-experience check for the proposed operation. It can return a **deny** decision for a definite violation, and otherwise injects an advisory. Memory tools themselves are skipped. |
+| `PostToolUse` / `PostToolUseFailure` | Prompts for a recorded experience after a failure or after several search steps — the point being to capture a path or a ruled-out route before compaction loses it. |
+| `Stop` / `PreCompact` / `SessionEnd` | Queues a bounded, redacted checkpoint (the user's request plus a truncated reply excerpt) for durable capture. |
+| `SessionEnd` | Also reuses the current turn's reply if the host sends no assistant text, instead of replacing a richer checkpoint. |
+
+Guarantees worth knowing:
+
+- **Hooks never grant permission.** They inject context and can deny; they never relax the
+  host's sandbox or approval mode.
+- **Reads never reinforce.** No read path promotes a habit or extends a context's lifetime.
+- **Redaction is applied** to hook output, bootstrap, recall and checkpoint writes, and capture
+  rejects recognizable credentials. Historical journals are not rewritten by read paths.
+- **No-record instructions are honoured.** A prompt that says not to record suppresses
+  checkpoint capture for that turn (`state.readOnly`), creating neither events nor workspace notes.
+- **Failures stay visible.** A failed checkpoint keeps its payload and last error in the
+  hook queue and is retried; a missing workspace is never counted as a successful closeout.
+
+On Codex with a model matching `hook.codexDeferredAdvisoryModels`, tool advisories are deferred
+instead of injected mid-sequence: Codex turns extra hook context into a developer message,
+which can land between a tool call and its result and split `tool_calls` from the tool reply,
+an ordering strict providers reject. The text waits and rides the next prompt instead. Deny
+decisions are never deferred.
+
+## The event and evidence contract
+
+The authoritative contract is [`event-schema.md`](event-schema.md), which `setup` publishes
+into the memory home so agents can read it locally. The short version:
+
+```json
+{
+  "event_id": "20260907-codex-example-01",
+  "workspace": "my-project",
+  "topic": "my-project/channel-config",
+  "agent": "codex",
+  "occurred_at": "2026-09-07T16:00:00+08:00",
+  "evidence": ["digest/existing-source.md"],
+  "facts": [{ "key": "specific-contract", "text": "A verified conclusion." }],
+  "verification": ["Exactly what was checked and what was not."],
+  "actions": [{ "id": "verify-specific-case", "status": "open", "text": "One next action." }]
+}
+```
+
+Rules the implementation enforces:
+
+- **Required fields:** `event_id`, `workspace`, `topic`, `agent`, `occurred_at`, `recorded_at`,
+  and at least one `evidence` entry.
+- **Evidence must exist on disk.** Every entry is a store-relative path to an existing note,
+  optionally with a `#heading`. An event cannot cite a note that is not there, and it must never
+  cite itself.
+- **The topic must be registered** for that workspace first, via `register`.
+- **Immutability.** Events are appended, never edited. Reusing an `event_id` with different
+  content is an error; reusing it with identical content is an idempotent retry, which is what
+  makes interrupted writes safe to repeat.
+- **`supersedes` is required to change a fact.** A differing claim for the same
+  `topic` + `key` without it is recorded as a **conflict**: the current value is preserved and
+  the disagreement is surfaced. Timestamps alone never win, and resolving a conflict clears it
+  by explicitly superseding one side.
+- **Retirement.** A replacement may mark itself `status: "invalidated"`, which removes the
+  record from the current view without breaking the evidence chain.
+- **Optional arrays:** `experiences`, `contexts`, `preferences` (candidates only),
+  `habit_decisions`, `mistakes`.
+- **No event size ceiling.** Long bodies belong in a note under `digest/longform/` with a small
+  pointer event; injection stays bounded on the read side instead.
+- **Secrets are rejected.** Recognizable credentials and private keys are refused at write time.
+
+Journal on disk: one file per recorded day, workspace and agent at
+`events/<YYYY-MM-DD>-<workspace>-<agent>.md`, with each event stored as a delimited block:
+
+````markdown
+<!-- EVENT:20260907-codex-example-01 -->
+```json
+{ "event_id": "20260907-codex-example-01", "...": "..." }
+```
+<!-- END-EVENT -->
+````
+
+A journal with unbalanced blocks, an event whose marker disagrees with its `event_id`, or a
+consumed event that changed or disappeared makes the store fail closed rather than serve a
+half-parsed history.
+
+### Engineering note: content is written as bytes
+
+Note content is written as bytes straight to the target path and then verified by reading it
+back. It is **never** passed through a CLI argument list. The Obsidian CLI decodes the
+two-character sequences `\n` and `\t` inside every argument and offers no way to escape a
+literal backslash before those letters, so a Windows path such as `C:\temp\new\file.md` would
+arrive as `C:<TAB>emp<LF>ew\file.md` and corrupt the journal. Reads are byte-faithful, so the
+CLI stays the verification channel while the filesystem stays the write channel. Appends are
+exact-or-rollback for the same reason: one corrupt append would otherwise break `loadEvents`
+for the whole store.
+
+## The shared policy block
+
+The behavior the agents follow lives in one file: `<memory home>/bootstrap.md`
+([`bootstrap.md`](bootstrap.md) in this repository is the seed copy). `setup` publishes it into
+each host's instruction file inside managed markers:
+
+```markdown
+<!-- AGENT-POLICY:START -->
+Source: <memory home>/bootstrap.md; sha256: <hash>; adapter: codex.
+...policy text...
+<!-- AGENT-POLICY:END -->
+```
+
+- Text outside the markers is always preserved.
+- Each block records the source path, the source hash and the adapter name, so drift is visible.
+- Claude Code receives a native `@`-import of the policy file instead of an inlined copy.
+- The publisher checks source hashes, **not** runtime model behavior. An existing session may
+  need a new task before it loads changed instructions.
+- Maintain the policy source, never the generated host blocks.
+
+Confirmed habits have exactly one data source: the note named by `roles.habitsNote`, in the
+validated JSON block between its managed markers. Only confirmed, scope- and trigger-matching
+preferences apply; one-off requests stay session-only, and inferred candidates never become
+mandatory on their own.
+
+## Tests and the leak gate
+
+```bash
+npm test          # node --test test/*.test.mjs
+npm run check     # node scripts/check-syntax.mjs
+npm run leak-scan # node scripts/leak-scan.mjs
+```
+
+- **`npm test`** runs the unit and integration suite (21 test files) over the layout model,
+  storage adapters, event validation, ranking, search, retention, transcripts, dashboard writes
+  and the dsh plugin bridge.
+- **`npm run check`** runs `node --check` over every first-party `.mjs` file. Vendored code and
+  the committed console bundle are skipped because they are not ours to fix.
+- **`npm run leak-scan`** scans generic credential and private-path patterns, including
+  its own source. It is a best-effort gate, not proof that a release contains no private data.
+  Set `MEMKEEL_LEAK_TERMS_FILE` to an external JSON array of literal private identifiers
+  for maintainer-specific checks. Never commit that file. Diagnostics omit matched values.
+  Review Git history, binary assets and release artifacts separately.
+
+### Upgrade and deployment notes
+
+- Codex advisory injection is deferred for every model by default. Legacy model lists are
+  ignored, including empty lists. Only `hook.codexDeferAdvisory: false` opts out.
+- Setup pins the absolute memory home in MCP and hook declarations. After upgrading an
+  existing binding, review `setup --dry-run`; use `setup --force` to explicitly rebind it.
+- Installation refusals return a nonzero exit code. `--check` also fails on drift.
+- Uninstall restores the original bytes recorded in `state/setup-receipt.json`, including
+  native-memory settings. It refuses later user edits rather than overwriting them. Legacy
+  installations without a receipt require manual restoration from their setup backups.
+- Keep the receipt and backups private: they may contain existing host credentials.
+- Changing store paths in Settings selects a store; it does not migrate or copy data.
+  Stop writers, back up both the memory home and store, copy and verify the store, then
+  change paths and run `doctor`. Keep the old store until reads and writes are verified.
+- CI tests Node 22/24 on Windows, Linux and macOS. Publishing to npm and rewriting public
+  Git history remain separate maintainer operations, not automatic upgrade steps.
+## Why Obsidian (optional)
+
+The store is a folder of Markdown files, and that is the whole contract. Any editor works.
+
+Obsidian is an *enhancement*, not a requirement:
+
+- With the **`filesystem`** backend (the default) Memkeel never needs Obsidian at all.
+- With the **`obsidian-cli`** backend, writes still go to disk as bytes and the CLI is used to
+  confirm the vault view, so Obsidian's cache can never be the source of truth.
+- If you already live in a vault, point `vaultRoot` at it and fill in `roles` to match your
+  house structure. Managed blocks keep generated content separate from your own prose.
+- If you do not use Obsidian, keep `storage: "filesystem"` and forget the last two keys.
+
+What you give up without Obsidian is only the CLI readback confirmation step and any vault
+conveniences you personally rely on. Nothing in the event model depends on it.
+
+## Docker
+
+The image runs the **`filesystem`** backend only: no Obsidian, no GUI, no external services.
+
+```bash
+docker build -t memkeel .
+
+# First run: create the memory home and point the store at the mounted volume.
+docker run --rm -v memkeel-home:/memkeel -v "$PWD/store:/store" memkeel init --store /store
+
+# Afterwards the default command is the health check.
+docker run --rm -v memkeel-home:/memkeel -v "$PWD/store:/store" memkeel
+```
+
+| Volume | Container path | Why |
+| --- | --- | --- |
+| Memory home | `/memkeel` | `config.json`, `bootstrap.md`, `event-schema.md`, `state/`, `backups/`. |
+| Markdown store | `/store` | The `vaultRoot`: the event journal and every projection. Keep this on a real volume — it is the data. |
+
+Mount both. The memory home holds the config and derived state; the store holds the Markdown
+you would be sad to lose. `MEMKEEL_HOME` is set to `/memkeel` in the image.
+
+`init` is idempotent, and it has to be told where the store lives: without `--store /store` it
+creates the store inside the home volume and the `/store` mount goes unused. Once a memory home
+exists the default command is `node memory.mjs doctor`, and you can override it with any other
+command, for example:
+
+```bash
+docker run --rm -v memkeel-home:/memkeel -v "$PWD/store:/store" memkeel \
+  bootstrap --cwd /store --query "release checklist"
+```
+
+Hooks are meaningless in a container (no agent host lives there), so skip `setup` there and bind
+the hosts from the machine that actually runs the agents. Never bake a config, a store or a
+token into the image.
+
+## Project layout
+
+```text
+memkeel/
+├── bin/memkeel.mjs          # npm bin shim -> memory.mjs
+├── memory.mjs               # CLI entry point (all commands, help text, option parsing)
+├── mcp-server.mjs           # MCP stdio server: agent_memory_read + agent_memory
+├── hook-runner.mjs          # Native hook entry point (JSON payload on stdin)
+├── dsh-memory-plugin.mjs    # Zero-dependency dsh hook bridge
+├── setup.mjs                # `memkeel setup`: MCP + hooks + policy per host
+├── dashboard.mjs            # Local read-mostly console HTTP server
+├── integrate-mcp.mjs        # Standalone MCP registration (legacy convenience wrapper)
+├── integrate-hooks.mjs      # Standalone hook installation (legacy convenience wrapper)
+├── publish.mjs              # Publish the shared policy block to host instruction files
+├── bootstrap.md             # The shared policy source (published into each host)
+├── event-schema.md          # The authoritative event/evidence contract
+├── config.example.json      # Config schema with placeholders
+├── lib/
+│   ├── core.mjs             # Bootstrap, recall, event load/validate, projections
+│   ├── layout.mjs           # Role resolution (modern roles + legacy flat keys)
+│   ├── lifecycle.mjs        # capture, habit decisions, maintenance
+│   ├── checkpoints.mjs      # Durable drain of queued hook checkpoints
+│   ├── hooks.mjs            # Per-event hook behaviour
+│   ├── preferences.mjs      # Habit rules, candidates, validated JSON block
+│   ├── experience.mjs       # Experiences, contexts, promotion rules
+│   ├── retention.mjs        # Soft-drop ledger with substance guardrail
+│   ├── weight.mjs           # Read-driven weight settlement (ranking only)
+│   ├── access-log.mjs       # The one derived log a read may write
+│   ├── transport.mjs        # Path safety, atomic JSON, writer locks, Obsidian transport
+│   ├── digest.mjs           # Daily digest projection
+│   ├── dashboard-*.mjs      # Read models and the preview/execute write handshake
+│   ├── storage/             # adapter.mjs, filesystem.mjs, index.mjs (backend factory)
+│   ├── search/              # bm25.mjs, tiered-read.mjs, index-bridge.mjs
+│   └── ingest/              # Pipeline, sources and history backfill
+├── dashboard/
+│   ├── app/                 # React + Vite + Ant Design + TanStack Table + ECharts sources
+│   └── static/              # Committed production bundle (no build step needed)
+├── test/                    # node --test suite
+├── scripts/                 # check-syntax.mjs, leak-scan.mjs
+├── examples/neutral-vault/  # A tiny example store for inspection
+└── vendor/obsidian-mind/    # Vendored MIT helpers (see THIRD_PARTY.md)
+```
+
+## License and credits
+
+MIT. See [LICENSE](LICENSE).
+
+Memkeel vendors a small amount of MIT-licensed code from
+[`breferrari/obsidian-mind`](https://github.com/breferrari/obsidian-mind) under
+`vendor/obsidian-mind/`, with its license preserved. Full attribution — including the frontend
+runtime dependencies of the web console — is in [THIRD_PARTY.md](THIRD_PARTY.md).

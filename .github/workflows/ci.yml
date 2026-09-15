@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: node --version
+        run: node --version
+
+      # The core system has zero runtime npm dependencies, so there is nothing to
+      # install before running the gates.
+      - name: test
+        run: npm test
+
+      - name: syntax check
+        run: npm run check
+
+      - name: leak gate
+        run: npm run leak-scan
+
+  dashboard:
+    name: dashboard bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # `npm --prefix <dir> ci` crashed with npm's internal "Exit handler never called!"
+      # on the runner, so the frontend install runs in its own directory instead, which is
+      # the documented way to drive a sub-package.
+      - name: build the console
+        working-directory: dashboard/app
+        run: npm ci --no-audit --no-fund
+      - name: build the bundle
+        run: npm run dashboard:build
+
+      # dashboard/static/ is committed on purpose so the console runs with no build step.
+      # Rebuilding must therefore reproduce exactly what is checked in.
+      - name: verify the committed bundle is up to date
+        run: |
+          if [ -n "$(git status --porcelain dashboard/static)" ]; then
+            echo "::error::dashboard/static is stale. Run 'npm run dashboard:build' and commit the result."
+            git status --porcelain dashboard/static
+            git --no-pager diff --stat dashboard/static
+            exit 1
+          fi
+          echo "dashboard/static is up to date"

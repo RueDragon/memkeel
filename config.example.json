@@ -1,0 +1,39 @@
+{
+  "_comment": "Example only. Real path: <policyRoot>/config.json. Code depends on logical roles, not physical paths.",
+  "version": "1.0.0",
+
+  "memoryRoot": "C:/Users/<you>/agent-memory",
+  "layout": "neutral",
+
+  "roles": {
+    "eventsRoot": "events",
+    "topicsRoot": "topics",
+    "projectRoot": "projects",
+    "habitsNote": "habits.md",
+    "actionsNote": "actions.md",
+    "mistakesNote": "mistakes.md",
+    "candidatesNote": "candidates.md",
+    "experienceNote": "experience.md",
+    "inboxRoot": "digest"
+  },
+
+  "_storage": "obsidian-cli requires `obsidianCli` and `vaultName`; filesystem ignores them.",
+  "storage": "filesystem",
+  "vaultRoot": "C:/Users/<you>/agent-memory",
+  "vaultName": "",
+  "obsidianCli": "",
+
+  "policyRoot": "C:/Users/<you>/.memkeel",
+
+  "activeLimit": 6,
+  "recentLimit": 6,
+  "recentDays": 14,
+  "budgetBytes": 14000,
+  "workspaceAliases": {},
+
+  "hook": {
+    "codexDeferAdvisory": true
+  },
+
+  "topics": []
+}

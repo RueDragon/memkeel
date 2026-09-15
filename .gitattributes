@@ -1,0 +1,21 @@
+# Line endings are pinned so a Windows checkout and a Linux checkout agree byte for byte.
+# This matters beyond tidiness: the built console bundle under dashboard/static/ is committed
+# on purpose, CI rebuilds it and fails if the result differs, and an autocrlf-induced
+# CRLF-versus-LF difference would surface as a bogus "stale bundle" error on a machine whose
+# only sin was running Windows.
+* text=auto eol=lf
+
+# Assets are not text; never normalise them.
+*.woff2 binary
+*.woff binary
+*.ttf binary
+*.otf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text eol=lf
+*.zip binary
+*.gz binary
+*.zstd binary

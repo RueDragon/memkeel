@@ -1,0 +1,28 @@
+# Build context exclusions.
+#
+# dashboard/static/ is deliberately NOT excluded: the built bundle is committed on purpose so
+# the console runs with no build step, and the image ships it.
+#
+# Kept deliberately explicit. A broad pattern such as `*.md` would also drop bootstrap.md and
+# event-schema.md, which the image needs (setup reads the shared policy source), so only the
+# files known to be unnecessary are excluded here.
+.git
+.github
+node_modules
+**/node_modules
+dashboard/app/dist
+test
+examples
+CONTRIBUTING.md
+SECURITY.md
+CHANGELOG.md
+THIRD_PARTY.md
+README.md
+LICENSE
+Dockerfile
+.dockerignore
+.gitignore
+*.log
+.env
+.env.*
+*.zstd
