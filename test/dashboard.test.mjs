@@ -8,6 +8,7 @@ import { applyLayout } from '../lib/layout.mjs';
 import { createTransport } from '../lib/storage/index.mjs';
 import { ensureWorkspace, record } from '../lib/core.mjs';
 import { settingsSnapshot } from '../lib/dashboard-data.mjs';
+import { privacyView } from '../lib/privacy.mjs';
 
 // Builds a small isolated vault + policy root and returns a config loader plus the
 // project directory, so dashboard tests never touch the real vault.
@@ -170,6 +171,47 @@ test('settings endpoint reports the config path, the editable groups and the rea
     assert.match(body.setup.apply, /setup/);
     assert.match(body.setup.note, /命令行/);
   });
+});
+
+test('the settings payload reports the effective collection policy instead of offering a switch', (t) => {
+  const { config, loader } = fixture(t);
+  const file = path.join(config.policyRoot, 'config.json');
+
+  // Default: no collection section at all still reads as collecting, so an existing store is
+  // unaffected by the feature having been added.
+  const before = settingsSnapshot(loader());
+  assert.equal(before.collection.decision.collecting, true);
+  assert.equal(before.collection.decision.decidedBy, 'global');
+  assert.equal(before.collection.scopes.global, 'on');
+  assert.equal(before.groups.collection, undefined, 'the page must not present a collection editor group');
+
+  // A workspace opt-out plus an exclusion rule, written the way a user would write it.
+  const workspace = config.topics[0].workspace;
+  const excluded = path.join(config.policyRoot, 'excluded');
+  const persisted = JSON.parse(fs.readFileSync(file, 'utf8'));
+  persisted.collection = { enabled: true, workspaces: { [workspace]: false }, exclude: { paths: [excluded], sessionTypes: ['scratch'] } };
+  fs.writeFileSync(file, JSON.stringify(persisted, null, 2));
+
+  const snapshot = settingsSnapshot(loader());
+  // A context-free answer must say so, and must not pretend a workspace-level opt-out applies when no
+  // workspace was named — that is the difference between reporting the policy and inventing a verdict.
+  assert.equal(snapshot.collection.context.scoped, false);
+  assert.equal(snapshot.collection.decision.collecting, true);
+  assert.equal(snapshot.collection.decision.decidedBy, 'global');
+  // The scope lists are where the opt-out shows up, which is what the page renders.
+  assert.equal(snapshot.collection.scopes.workspaces.find((row) => row.workspace === workspace).state, 'off');
+  assert.deepEqual(snapshot.collection.scopes.exclusions.map((row) => row.kind), ['paths', 'sessionTypes']);
+  // Named context: the same view, now decided by the workspace.
+  const scopedView = privacyView(loader(), { workspace });
+  assert.equal(scopedView.decision.collecting, false);
+  assert.equal(scopedView.decision.decidedBy, 'workspace');
+  assert.equal(scopedView.context.scoped, true);
+  // `collection` is preserved but not editable from this page, and the page says so.
+  assert.ok(snapshot.preservedKeys.includes('collection'));
+  // The three states travel with the payload, including the one that is not offered.
+  assert.deepEqual(snapshot.collection.vocabulary.map((row) => row.state), ['not-collected', 'retained-not-retrieved', 'physically-deleted']);
+  assert.equal(snapshot.collection.vocabulary.find((row) => row.state === 'physically-deleted').supported, false);
+  assert.match(snapshot.collection.permanentDeletion, /物理删除未实现/);
 });
 
 test('settings reports a store path that does not validate instead of failing', async (t) => {

@@ -115,6 +115,91 @@ function ObsidianGuide({ obsidian }) {
   );
 }
 
+// 采集策略是**只读展示**：关闭采集会影响 hook、ingest 与访问日志，所以这一页报告「现在生效的是什么、
+// 由哪一层决定的」，而不是给一个看起来像开关、实际只管渲染的控件。数据来自后端的 privacyView()，
+// 与 `memkeel privacy show` 打印的是同一个函数，两边不可能说法不一致。
+function CollectionPolicy({ collection }) {
+  if (!collection) return null;
+  const decision = collection.decision ?? {};
+  const scopes = collection.scopes ?? {};
+  const hosts = scopes.hosts ?? [];
+  const workspaces = scopes.workspaces ?? [];
+  const exclusions = scopes.exclusions ?? [];
+  const scoped = collection.context?.scoped === true;
+  const stateTag = (state) => (
+    <Tag color={state === 'off' ? 'red' : 'green'}>{state === 'off' ? '关闭' : '开启'}</Tag>
+  );
+  return (
+    <div>
+      <Alert
+        type={decision.collecting ? 'success' : 'warning'}
+        showIcon
+        message={scoped
+          ? (decision.collecting ? '该上下文会被采集' : '该上下文不会被采集')
+          : (decision.collecting ? '默认判定：采集' : '默认判定：不采集')}
+        description={(
+          <div>
+            <div>{decision.reason}</div>
+            <div className="muted" style={{ marginTop: 4 }}>
+              由「{decision.decidedBy}」这一层决定。优先级只让采集变得更少：全局关闭是硬停，任何更窄的开关都不能把它重新打开。
+            </div>
+            {!scoped && (
+              <div className="muted" style={{ marginTop: 4 }}>
+                本页没有具体会话上下文，所以判定按「未指定宿主 / 工作区」计算；工作区级与宿主级的关闭只在对应上下文中生效，
+                具体范围见下面的作用域列表。
+              </div>
+            )}
+          </div>
+        )}
+      />
+      <Descriptions
+        column={1}
+        size="small"
+        style={{ marginTop: 10 }}
+        items={[
+          { key: 'global', label: '全局 enabled', children: stateTag(scopes.global) },
+          {
+            key: 'hosts',
+            label: '宿主级',
+            children: hosts.length
+              ? hosts.map((row) => <Tag key={row.host} color={row.state === 'off' ? 'red' : 'green'}>{row.host}：{row.state === 'off' ? '关闭' : '开启'}</Tag>)
+              : <span className="muted">未单独设置</span>,
+          },
+          {
+            key: 'workspaces',
+            label: '工作区级',
+            children: workspaces.length
+              ? workspaces.map((row) => <Tag key={row.workspace} color={row.state === 'off' ? 'red' : 'green'}>{row.workspace}：{row.state === 'off' ? '关闭' : '开启'}</Tag>)
+              : <span className="muted">未单独设置</span>,
+          },
+          {
+            key: 'exclusions',
+            label: '排除规则',
+            children: exclusions.length
+              ? exclusions.map((row) => <div key={`${row.kind}:${row.rule}`} className="mono">{row.kind} = {row.rule}</div>)
+              : <span className="muted">无</span>,
+          },
+        ]}
+      />
+      <Divider plain style={{ margin: '10px 0' }}>三种「删除」不是一回事</Divider>
+      <ul className="settings-paths">
+        {(collection.vocabulary ?? []).map((row) => (
+          <li key={row.state}>
+            <Tag color={row.supported ? 'green' : 'default'}>{row.supported ? '已提供' : '不提供'}</Tag>
+            <b>{row.label}</b>：{row.meaning}
+          </li>
+        ))}
+      </ul>
+      <div className="muted" style={{ marginTop: 8 }}>{collection.permanentDeletion}</div>
+      <div className="muted" style={{ marginTop: 8 }}>
+        本页只展示、不修改采集开关。改完 <Text className="mono">collection</Text> 后可用{' '}
+        <Text className="mono">memkeel privacy show</Text> 复核，或用{' '}
+        <Text className="mono">memkeel privacy export --out FILE</Text> 导出一份脱敏诊断。
+      </div>
+    </div>
+  );
+}
+
 export default function Settings({ reload }) {
   const { message } = AntApp.useApp();
   const [form] = Form.useForm();
@@ -394,6 +479,13 @@ export default function Settings({ reload }) {
               </Col>
             ))}
           </Row>
+        </div>
+      </div>
+
+      <div className="panel" style={{ marginTop: 12 }}>
+        <h3 className="panel-title">采集与隐私（只读）</h3>
+        <div>
+          <CollectionPolicy collection={settings.collection} />
         </div>
       </div>
 

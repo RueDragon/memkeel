@@ -47,6 +47,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   on is worse than no audit, because it reports `clean`. The test asserts a planted leak is caught and
   that the audit does not echo the value it found. Writing also refuses to overwrite an existing file,
   since the export is cheap to regenerate and may already have been sent to someone.
+- **The settings page shows the effective collection policy.** The dashboard's read model now carries
+  the same `privacyView` payload the CLI prints, so the two cannot disagree, and Settings renders it
+  read-only: the decision, the scope lists, the exclusion rules and the three-state vocabulary — with
+  the unsupported state marked as unsupported. It is deliberately not an editor: turning collection off
+  affects hooks, ingest and the access log, so the page reports what is in force instead of offering a
+  control that only looks like a switch. The payload also states the context its verdict was computed
+  for, so a context-free answer cannot be mistaken for a statement about the current session: a
+  workspace-level opt-out legitimately does not apply when no workspace was named, and the page says so
+  rather than implying otherwise.
 - **Turning collection off covers what is already queued.** A checkpoint written before the switch
   was turned off does not become evidence afterwards: the drain marks it `held` and defers it rather
   than promoting it or discarding it, so turning collection back on drains it normally. `held` is a

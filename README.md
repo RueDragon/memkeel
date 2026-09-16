@@ -419,6 +419,14 @@ conversation text, not by the pages that display it:
 | `privacy cleanup [--host H] [--workspace W] [--cwd DIR]` | Read-only preview of what a retention cleanup would touch, and an explicit list of what it would not. Deletes nothing. |
 | `privacy export --out FILE` | Writes **one** redacted file, safe to hand to someone else: versions, counts, the configuration with credentials dropped and paths reduced, and the effective collection policy. No session text, no evidence, no full paths, no credentials. It audits its own payload against the real string values before writing and refuses to write if that check fails; it also refuses to overwrite an existing file. |
 
+The dashboard's **Settings** page renders this same policy read-only — the decision, the scope lists,
+the exclusion rules and the three states above — from the same function the CLI uses, so the page and
+`privacy show` cannot disagree. It is not an editor on purpose: turning collection off reaches hooks,
+ingest and the access log, so the page reports what is in force rather than offering a control that
+only looks like a switch. Because the page has no session context, it labels its verdict as the default
+for an unnamed host and workspace, and lists the scopes separately — a workspace-level opt-out does not
+apply to a question that names no workspace, and the page says so instead of implying otherwise.
+
 ```json
 {
   "collection": {
