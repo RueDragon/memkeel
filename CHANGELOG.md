@@ -56,6 +56,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for, so a context-free answer cannot be mistaken for a statement about the current session: a
   workspace-level opt-out legitimately does not apply when no workspace was named, and the page says so
   rather than implying otherwise.
+- **`privacy cleanup --execute`: the retention values now do something.** The plan resolves the
+  configured numbers into concrete paths — keeping the newest `backups` setup snapshots and config
+  migration backups, and removing `state/hook-sessions/` directories and `state/last-bootstrap.json`
+  older than `diagnosticsDays` — and reports each target's group, measured size and the modified time
+  the decision came from, so the preview is checkable rather than reassuring. Execution re-derives
+  every path from the memory home and re-checks its group before deleting, because a plan is data and
+  may be stale or hand-edited: a target outside the home, an unknown group, or a protected path is
+  refused rather than honoured. Four things are out of reach by construction — the ledger and the
+  store (retention never rewrites immutable records), archives written elsewhere with
+  `backup create --out`, `backups/replacements/` (the rollback store an in-flight atomic write depends
+  on, which looks like a backup by its path and is not one), and anything outside the memory home. The
+  plan names the protected directories it spared rather than skipping them silently, so a reader can
+  see they were considered.
 - **Turning collection off covers what is already queued.** A checkpoint written before the switch
   was turned off does not become evidence afterwards: the drain marks it `held` and defers it rather
   than promoting it or discarding it, so turning collection back on drains it normally. `held` is a
