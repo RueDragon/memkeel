@@ -238,3 +238,32 @@ test('a restrictive mode survives a rewrite', { skip: process.platform === 'win3
   atomicJson(file, { token: 'secret' });
   assert.equal(existingMode(file), 0o600);
 });
+
+test('the root real path is cached, and caching it changes none of the checks', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lu-memory-inside-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const vaultRoot = path.join(root, 'vault');
+  fs.mkdirSync(vaultRoot);
+
+  // Resolving a normal path works, and the result is the real path of the root (not the spelling given).
+  assert.equal(inside(vaultRoot, 'note.md'), path.join(fs.realpathSync(vaultRoot), 'note.md'));
+
+  // Containment is still enforced. Caching the root must not turn the escape check into a formality.
+  assert.throws(() => inside(vaultRoot, '../escape.md'), /escapes root/);
+  assert.throws(() => inside(vaultRoot, '/etc/passwd'), /Expected relative path/);
+
+  // A symlink that leaves the root is still refused. This is the check the cache could plausibly have
+  // broken, because it is the one that depends on a real path being resolved at all.
+  const outside = path.join(root, 'outside');
+  fs.mkdirSync(outside);
+  let linked = true;
+  try { fs.symlinkSync(outside, path.join(vaultRoot, 'link'), 'junction'); }
+  catch { linked = false; }
+  if (linked) assert.throws(() => inside(vaultRoot, 'link/x.md'), /Symlink escapes root/);
+
+  // A root that does not exist must still fail on *every* call: only successful resolutions are cached,
+  // so a missing root cannot become a cached success.
+  const missing = path.join(root, 'nope');
+  assert.throws(() => inside(missing, 'note.md'), /ENOENT|no such file/i);
+  assert.throws(() => inside(missing, 'note.md'), /ENOENT|no such file/i);
+});

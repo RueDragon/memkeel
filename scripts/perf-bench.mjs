@@ -202,6 +202,18 @@ export async function runBench({ events = 1000, workspaces = 8, iterations = 10,
   const results = {};
 
   results['loadEvents (full replay)'] = await measure(() => loadEvents(config), { iterations, warmup: 1 });
+  // The scenario a write actually faces: one journal file changed and the journal has to be read
+  // again. Measuring only the unchanged case reports the fingerprint cache and says nothing about the
+  // cost a write pays. The mutation is a bare newline, which changes the file's size without adding a
+  // marker, so the journal stays structurally valid.
+  const journalDir = path.join(config.vaultRoot, config.eventsRoot);
+  const journalFile = fs.readdirSync(journalDir).filter((name) => name.endsWith('.md')).map((name) => path.join(journalDir, name))[0];
+  if (journalFile) {
+    results['loadEvents after one file changed'] = await measure(() => {
+      fs.appendFileSync(journalFile, '\n');
+      return loadEvents(config);
+    }, { iterations, warmup: 1 });
+  }
   results['refreshIndex (cached)'] = await measure(() => refreshIndex(config), { iterations, warmup: 1 });
   results['refreshIndex (force)'] = await measure(() => refreshIndex(config, { force: true }), { iterations: Math.max(2, Math.floor(iterations / 3)), warmup: 0 });
   results['bootstrap'] = await measure(() => bootstrap(config, cwd, 'ledger evidence'), { iterations, warmup: 1 });

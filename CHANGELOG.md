@@ -228,6 +228,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   function now says so, because a later caller that mutated an entry would corrupt every call after it.
   Tests cover the two ways this could go wrong: two stores in one process must not share an index, and a
   legacy or corrupt `index.json` must be rebuilt rather than masked by a warm cache.
+- **`inside()` resolves its root's real path once instead of on every call.** The path containment
+  helper called `fs.realpathSync` twice per invocation, and a journal replay calls it once per evidence
+  source per event — measured at 1k events, those two calls were 452 ms of a 502 ms validation pass,
+  while the entire parse of the journal was 6.9 ms. Nearly every code path uses `inside`, so the fix
+  shows up almost everywhere: 1.5-2.2× across `loadEvents`, `record`, `recallFacts`, `settingsSnapshot`
+  and the dashboard routes. Only successful resolutions are cached, so a root that does not exist still
+  throws on every call, and the cursor is deliberately not cached because whether a path exists yet is
+  exactly what changes between calls; the symlink-escape check is unchanged and still tested.
+- **Recorded, because it is the more useful half of the result: a plausible optimisation was measured
+  and thrown away.** Caching the journal parse per file — the diagnosis at the time — was implemented
+  and produced no improvement (721 ms against 625 ms on the row that measures it). Splitting the replay
+  and timing it showed why: the parse is about 1% of the cost, and the rest is validation calling into
+  `inside()`. The cache added shared state and a caller contract for nothing, so it was reverted rather
+  than kept because it had felt right. `PERFORMANCE.md` records both the numbers and the dead end.
 - **Restore stays whole-file, and that is a decision rather than an omission.** Restoring only the
   fields we recognise would need a real parser per host format — TOML for Codex, JSON for Claude and
   ZCode, YAML for dsh — and this program ships with zero runtime dependencies by design. The

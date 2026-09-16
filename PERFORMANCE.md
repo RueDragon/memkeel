@@ -180,29 +180,103 @@ rebuilding the `entries` object each call. That is proportional to the number of
 their size, so it is a different and much smaller problem — and unlike the write path, it is no longer
 the thing standing between a user and a usable store.
 
+## Optimisation 3: a wrong hypothesis, and what the measurement said instead
+
+The plan says to find the bottleneck before optimising, and this is the round where that instruction
+paid for itself. The diagnosis so far — "the write path replays the journal, so cache the parse per
+file" — was implemented, measured, and **did not help**: the row that measures what it targets
+(`loadEvents` after one file changed) came out at 721 ms against 625 ms without it, which is noise.
+
+Rather than keep code that felt right, the replay was split and timed. `validateEvent` is exported, so
+the two halves could be measured directly instead of argued about, at 1k events:
+
+| what was timed | cost |
+| --- | --- |
+| read + extract + `JSON.parse` (the entire parse) | **6.9 ms** |
+| `validateEvent` over every event | **566.6 ms** |
+| — `JSON.stringify(event)` alone | 1.7 ms |
+| — the secret regex alone | 2.5 ms |
+| `inside()` path resolution, once per evidence source per event | **452.3 ms** |
+| `fs.existsSync`, same loop | 42.9 ms |
+
+The parse was about 1% of the work. The dominant cost was `inside()` — the path containment helper —
+because it called `fs.realpathSync(root)` **and** `fs.realpathSync(cursor)` on every invocation, and a
+replay calls it once per evidence source per event. Nearly every code path in this program uses
+`inside`, which is why the cost had shown up in so many rows without being attributed to anything.
+
+The per-file parse cache was reverted. It added a shared-state cache and a caller contract for no
+measurable gain, and keeping it would have been exactly the "felt improvement" this file exists to
+prevent.
+
+## Optimisation 4: resolve the root's real path once
+
+A root's real path is a property of the configured directory, not of the call, so `inside` resolves it
+once per root and remembers it. Only successful resolutions are cached — a root that does not exist still
+throws every time — and the cursor is deliberately not cached, because whether a path exists yet is
+precisely what changes between calls.
+
+At 1k events, against the immediately preceding commit:
+
+| operation | before | after | |
+| --- | --- | --- | --- |
+| loadEvents after one file changed | 624.66 ms | **350.03 ms** | 1.8× |
+| loadEvents (first, cold) | 741.51 ms | **370.62 ms** | 2.0× |
+| record (write) | 559.57 ms | **368.91 ms** | 1.5× |
+| recallFacts | 30.05 ms | **19.46 ms** | 1.5× |
+| settingsSnapshot | 15.30 ms | **7.01 ms** | 2.2× |
+| http /api/overview | 22.84 ms | **11.19 ms** | 2.0× |
+| http /api/detail | 6.98 ms | **4.49 ms** | 1.6× |
+| bootstrap | 344.53 ms | **275.83 ms** | 1.2× |
+
+Against the original recorded baseline, `record` goes from 890.69 ms to 368.91 ms (2.4×) and the cold
+`loadEvents` from 539.5 ms to 370.6 ms. `record` is a noisy row — it measured between 559 and 890 ms
+across runs on unchanged code — and the after value sits below that entire observed range, which is what
+makes it a result rather than a coincidence.
+
+At 10k events the same change moves the rows that are stable enough to read, and **not** the ones that
+are not:
+
+| operation | baseline (855a8e7) | after | |
+| --- | --- | --- | --- |
+| record (write) | 8483.23 ms | **3852.20 ms** | 2.2× |
+| loadEvents (first, cold) | 12018.85 ms | **3700 ms** | 3.2× |
+| refreshIndex (cached) | 129.01 ms | **9.71 ms** | 13.3× |
+| refreshIndex (force) | 371.0 ms | **231.42 ms** | 1.6× |
+| settingsSnapshot | 23.55 ms | **14.92 ms** | 1.6× |
+| http /api/events | 15.46 ms | **10.01 ms** | 1.5× |
+| http /api/detail | 13.05 ms | **10.70 ms** | 1.2× |
+| bootstrap | 3271.48 ms | 3695.82 ms | — not claimed |
+| consolidate | 25611.91 ms | 29807.63 ms | — not claimed |
+| recallFacts | 402.54 ms | 673.98 ms | — not claimed |
+
+The last three use `inside()` too, so they *should* have improved; they measured worse. At this scale the
+iteration count is 5 (and 2 for consolidate) and the p95 sits far above the p50 — bootstrap's p95 was
+5426 ms against a 3696 ms p50 — so a single run cannot separate a real effect from the noise. They are
+listed as unclaimed rather than reported in either direction, and settling them needs repeated runs and
+more iterations, not a re-reading of these numbers.
+
 ## What has not been done
 
-**Two optimisations have been made (above), and the rest have not.** The plan requires that performance
-work not change retrieval or reduction semantics, so each step is taken on its own with the full suite
-behind it rather than several at once.
+**Four optimisations have been made (above), and the write path's own structure is still untouched.**
+The plan requires that performance work not change retrieval or reduction semantics, so each step is
+taken on its own with the full suite behind it rather than several at once.
 
-**The write path — the actual bottleneck — is untouched.** The obvious fix, per-file parse caching
-keyed by `(mtimeMs, size)` so an append re-parses only the file that changed, has a real hazard:
-`validateEvent` is configuration-dependent, and the current cache fingerprint covers only the event
-files, not the configuration. A change there could start accepting an event it previously rejected, or
-reuse a parse that was validated against a different topic set. That needs its own design and its own
-tests; shipping it without them would be exactly the "felt improvement" this file exists to prevent.
+**The write path's own structure is untouched.** It is still O(N) per write — `record()` replays the
+journal and recomputes the preference projection on every call — but the constant is now much smaller,
+and the replay's dominant cost turned out not to be the replay at all (see optimisation 3). Per-file
+parse caching was tried and reverted: the parse is ~1% of the work.
 
 The order to try next, cheapest and safest first:
 
 1. ~~Make the cached `refreshIndex` a real no-op.~~ Done — 2.1× at both scales.
 2. ~~Stop re-parsing the index on every call.~~ Done — a further 2.6× at 1k and 5.1× at 10k, once the
    mutation audit showed every caller treats `entries` as read-only.
-3. Per-file parse caching for the journal, with the validation semantics preserved: cache the parsed
-   JSON, re-run `validateEvent` each call, and extend the fingerprint to cover the configuration keys
-   validation reads. Verify with the full suite plus the correctness block in `test/perf.test.mjs`.
-4. Only then the write path itself. Bounding `consolidate` and `bootstrap` may matter more than the
-   per-write cost.
+3. ~~Cache the journal parse per file.~~ Tried, measured, **reverted** — the parse is ~1% of a replay.
+   The measurement that disproved it is in optimisation 3, and it redirected the work to `inside()`.
+4. ~~Resolve the root's real path once instead of per call.~~ Done — 1.5-2.2× across most operations.
+5. What is left of the write path is the per-write full replay itself and `preferenceProjection` over
+   every event. Both are O(N) per write and need their own design; `consolidate` and `bootstrap` may
+   matter more than the per-write cost, and neither has been profiled yet.
 
 ## Not measured at all
 
