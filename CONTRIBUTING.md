@@ -38,12 +38,13 @@ npm --prefix dashboard/app install
 
 ## Running the gates
 
-Run all three before you push. CI runs the same commands.
+Run all four before you push. CI runs the same commands.
 
 ```bash
 npm test            # node --test test/*.test.mjs
 npm run check        # node scripts/check-syntax.mjs  (node --check on every first-party file)
-npm run leak-scan    # node scripts/leak-scan.mjs     (mandatory in CI)
+npm run leak-scan    # node scripts/leak-scan.mjs     (working tree; mandatory in CI)
+npm run pack-scan    # node scripts/pack-scan.mjs     (real npm pack artifact)
 ```
 
 ### `npm test`
@@ -62,17 +63,42 @@ console bundle (`dashboard/static/`) are skipped because they are not ours to fi
 
 **This one is not optional.** It is the guard that keeps the repository safe to publish, and CI
 fails the build on any hit. It scans the working tree for real user-profile paths, private store
-names and layout fragments, personal project identifiers, private emails, private keys and
-access tokens.
+names and layout fragments, personal project identifiers, private emails, private keys, access
+tokens and non-public package registries.
 
 ```console
 $ npm run leak-scan
-leak-scan: clean (117 files scanned)
+leak-scan: clean (144 files scanned)
+leak-scan: coverage: 10 non-text file(s) not inspected (.woff2 x10) - files that were not inspected are not covered by this result.
 ```
 
-If your change needs a new term that must never ship, add it to the `PATTERNS` list in
-`scripts/leak-scan.mjs` in the same pull request, with the reason in a comment. Do not "fix" a
-hit by deleting the scanner entry.
+The coverage line is part of the contract: this gate only reads text, so it states what it did
+not read. Do not suppress it, and do not present a clean run as proof that a release is free of
+private data.
+
+**The rule list is public.** Rules in `scripts/leak-scan.mjs` must stay generic, because naming a
+specific employer, customer or private project in that file publishes the very name it is meant
+to protect. A term that must never ship belongs in the external list instead:
+
+```bash
+# outside the repository, never committed, never printed
+MEMKEEL_LEAK_TERMS_FILE=/path/to/private-terms.json npm run leak-scan
+```
+
+The file is a JSON array of literal strings. CI reads the same list from the optional
+`MEMKEEL_LEAK_TERMS` repository secret. A missing, unreadable or malformed list fails the run
+instead of scanning without it, so a misconfigured gate can never pass silently. Do not "fix" a
+hit by deleting the rule or the term — fix the leak.
+
+### `npm run pack-scan`
+
+A clean working tree says nothing about the tarball, so this gate runs on the real artifact: it
+calls `npm pack`, unpacks it in a temporary directory, checks that every shipped file is declared
+in `package.json` `files`, and scans the unpacked text with the same rules. A file that ships
+without being declared fails the gate.
+
+When you add something that must ship, add its path to `files` in the same pull request. When you
+add a build output, confirm the resulting file list is what you intended.
 
 ## Rebuilding the dashboard bundle
 
@@ -131,7 +157,7 @@ The console server binds to loopback only. Keep it that way.
 | Hooks | `hook-runner.mjs`, `lib/hooks.mjs`, `lib/checkpoints.mjs`, `dsh-memory-plugin.mjs` |
 | MCP server | `mcp-server.mjs` |
 | Web console | `dashboard.mjs`, `lib/dashboard-*.mjs`, `dashboard/app/`, `dashboard/static/` |
-| Gates | `test/`, `scripts/check-syntax.mjs`, `scripts/leak-scan.mjs` |
+| Gates | `test/`, `scripts/check-syntax.mjs`, `scripts/leak-scan.mjs`, `scripts/pack-scan.mjs` |
 
 ## Design constraints to preserve
 

@@ -474,17 +474,34 @@ Source: <memory home>/bootstrap.md; sha256: <hash>; adapter: codex.
 ```bash
 npm test          # node --test test/*.test.mjs
 npm run check     # node scripts/check-syntax.mjs
-npm run leak-scan # node scripts/leak-scan.mjs
+npm run leak-scan # node scripts/leak-scan.mjs  （工作区）
+npm run pack-scan # node scripts/pack-scan.mjs  （真实 npm pack 产物）
 ```
 
 - **`npm test`** 在布局模型、存储适配器、事件校验、排序、搜索、保留策略、转录记录、
-  控制台写入以及 dsh 插件桥上运行单元与集成测试套件（21 个测试文件）。
+  控制台写入、dsh 插件桥以及泄漏门禁自身之上运行单元与集成测试套件（25 个测试文件）。
 - **`npm run check`** 对每个第一方 `.mjs` 文件运行 `node --check`。随仓库附带的代码和已
   提交的控制台产物会被跳过，因为它们不该由我们来修。
-- **`npm run leak-scan`** 检查通用凭据与私人路径特征，也扫描自身源码。这是尽力检测，
-  不代表发布内容绝对安全。维护者专属词表应保存为仓库外的 JSON 字符串数组，通过
-  `MEMKEEL_LEAK_TERMS_FILE` 指定，禁止提交。诊断不会输出匹配值。
-  Git 历史、二进制素材和发布产物仍需单独审查。
+- **`npm run leak-scan`** 扫描工作区（含自身源码），检查通用凭据、私人路径与非公共仓库
+  特征。维护者专属的字面词表应保存为仓库外的 JSON 字符串数组，由 `MEMKEEL_LEAK_TERMS_FILE`
+  指定；禁止提交该文件，也禁止把私人词写进扫描器自身的规则表。诊断只输出文件、行号与规则
+  id，绝不输出匹配值——公开仓库的 CI 日志本身就是公开的。
+- **`npm run pack-scan`** 执行 `npm pack`，解开真实 tarball，核对每个待发布文件都已声明在
+  `package.json` 的 `files` 中，并用同一套规则扫描产物。工作区干净并不代表真正会被发布的
+  内容干净。
+
+检查范围有三层，任何一层的结果都不能代表另外两层：
+
+| 范围 | 命令 | 覆盖 |
+|---|---|---|
+| 源码 | `npm run leak-scan` | 工作区，规则表 + 仓库外词表 |
+| 分发包 | `npm run pack-scan` | 真实 tarball 的文件清单与文本内容 |
+| 历史 | 未自动化 | 旧提交、悬空对象、fork 与已下载副本 |
+
+**覆盖范围有明确边界，且会打印出来。** 按非文本跳过的文件（`.png`、`.woff2`、`.pdf`、
+压缩包等二进制）不会被读取，符号链接也不会被跟随；运行时会给出一共跳过了多少个。私人库的
+截图或内部页面的 PDF 是能通过这道门禁的。因此"干净"只能理解为"在读到的文本里没有命中"，
+绝不等于"发布内容不含个人信息"。
 
 ### 升级与部署注意事项
 

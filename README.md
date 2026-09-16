@@ -500,19 +500,38 @@ mandatory on their own.
 ```bash
 npm test          # node --test test/*.test.mjs
 npm run check     # node scripts/check-syntax.mjs
-npm run leak-scan # node scripts/leak-scan.mjs
+npm run leak-scan # node scripts/leak-scan.mjs  (the working tree)
+npm run pack-scan # node scripts/pack-scan.mjs   (the real `npm pack` artifact)
 ```
 
-- **`npm test`** runs the unit and integration suite (21 test files) over the layout model,
-  storage adapters, event validation, ranking, search, retention, transcripts, dashboard writes
-  and the dsh plugin bridge.
+- **`npm test`** runs the unit and integration suite (25 test files) over the layout model,
+  storage adapters, event validation, ranking, search, retention, transcripts, dashboard writes,
+  the dsh plugin bridge and the leak gates themselves.
 - **`npm run check`** runs `node --check` over every first-party `.mjs` file. Vendored code and
   the committed console bundle are skipped because they are not ours to fix.
-- **`npm run leak-scan`** scans generic credential and private-path patterns, including
-  its own source. It is a best-effort gate, not proof that a release contains no private data.
-  Set `MEMKEEL_LEAK_TERMS_FILE` to an external JSON array of literal private identifiers
-  for maintainer-specific checks. Never commit that file. Diagnostics omit matched values.
-  Review Git history, binary assets and release artifacts separately.
+- **`npm run leak-scan`** scans the working tree, including its own source, for generic
+  credential, private-path and non-public-registry patterns. Maintainer-specific literal terms
+  belong in an external JSON array referenced by `MEMKEEL_LEAK_TERMS_FILE`; never commit that
+  file, and never put a private term in the scanner's own rule list. Diagnostics report the file,
+  line and rule id but never the matched value, because a CI log on a public repository is public
+  too.
+- **`npm run pack-scan`** packs with `npm pack`, unpacks the real tarball, checks that every
+  shipped file is declared in `package.json` `files`, and scans the artifact with the same rules.
+  A clean working tree says nothing about what would actually be published.
+
+There are three distinct scopes, and a result in one says nothing about the others:
+
+| Scope | Command | Covers |
+|---|---|---|
+| Source | `npm run leak-scan` | the working tree, rule set plus the external term list |
+| Package | `npm run pack-scan` | the real tarball's file list and text content |
+| History | not automated | earlier commits, dangling objects, forks and downloaded copies |
+
+**Coverage is bounded, and the summary states the bounds.** Files skipped as non-text
+(`.png`, `.woff2`, `.pdf`, archives and other binaries) are not read, and symbolic links are not
+followed; the run prints how many were skipped. A screenshot of a private vault or a PDF of an
+internal page would pass this gate. Treat a clean result as "no match in the text that was read",
+never as proof that a release contains no personal information.
 
 ### Upgrade and deployment notes
 

@@ -34,9 +34,47 @@ jobs:
       - name: syntax check
         run: npm run check
 
-      # Never publish a tag that contains personal data.
-      - name: leak gate
+      # A maintainer's private identifiers live only in an optional repository secret, staged
+      # outside the checkout. The value is never printed.
+      - name: stage the private term list when one is configured
+        env:
+          MEMKEEL_LEAK_TERMS: ${{ secrets.MEMKEEL_LEAK_TERMS }}
+        run: |
+          if [ -n "$MEMKEEL_LEAK_TERMS" ]; then
+            printf '%s' "$MEMKEEL_LEAK_TERMS" > "$RUNNER_TEMP/private-terms.json"
+            echo "MEMKEEL_LEAK_TERMS_FILE=$RUNNER_TEMP/private-terms.json" >> "$GITHUB_ENV"
+            echo "private term list: configured"
+          else
+            echo "private term list: not configured - generic rules only"
+          fi
+
+      # Never publish a tag that contains personal data. The tag path runs the same gates as
+      # ordinary CI so that a release cannot bypass them.
+      - name: leak gate (source tree)
         run: npm run leak-scan
+
+      # A clean working tree says nothing about the tarball that would be published.
+      - name: leak gate (packaged artifact)
+        run: npm run pack-scan
+
+      # The console is committed prebuilt, so a tag whose sources no longer reproduce the
+      # committed bundle would publish a console nobody can verify.
+      - name: build the console
+        working-directory: dashboard/app
+        run: npm ci --no-audit --no-fund
+
+      - name: rebuild the bundle
+        run: npm run dashboard:build
+
+      - name: verify the committed bundle is up to date
+        run: |
+          if [ -n "$(git status --porcelain dashboard/static)" ]; then
+            echo "::error::dashboard/static is stale. Run 'npm run dashboard:build' and commit the result."
+            git status --porcelain dashboard/static
+            git --no-pager diff --stat dashboard/static
+            exit 1
+          fi
+          echo "dashboard/static is up to date"
 
       - name: create GitHub Release
         env:

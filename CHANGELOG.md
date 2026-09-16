@@ -7,7 +7,40 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **`npm run pack-scan`: a packaged-artifact gate.** A clean working tree says nothing about
+  what `npm pack` ships, so this gate packs, unpacks the real tarball in a temporary directory,
+  checks that every shipped file is declared in `package.json` `files`, and scans the unpacked
+  text with the same rules as the source gate. An undeclared shipped file fails the run.
+- **The private term list can arrive from CI.** A new `privacy` CI job and the tag-release
+  workflow read the optional `MEMKEEL_LEAK_TERMS` repository secret, stage it outside the
+  checkout and pass it through `MEMKEEL_LEAK_TERMS_FILE`. The value is never printed.
+- **The coverage of every leak run is stated.** `leak-scan` now reports how many non-text files
+  and binary files it skipped and how many symlinks it did not follow, so a clean result is never
+  mistaken for a guarantee about files the scanner cannot read.
+- **`leak-scan --root DIR` and `--json`.** The same rule set can scan an arbitrary tree, which is
+  what makes the packaged-artifact gate possible, and emit machine-readable hits containing the
+  file, line and rule id but never the matched value.
+- **Rules for macOS and Linux profile paths**, non-public `.npmrc` registries and inline
+  `_authToken` values, and AWS, GitLab, Slack and Google key shapes. Documented placeholders such
+  as a home directory template stay exempt.
+- **The release workflow now runs the gates ordinary CI runs**, including the packaged-artifact
+  gate and the committed-console-bundle freshness check, so a tag cannot bypass them.
+
+### Changed
+
+- **`leak-scan` reports and fails cleanly.** A missing or malformed private term list exits 2 with
+  one actionable line instead of a raw stack trace. Diagnostics still print only the file, line
+  and rule id; matched values are never echoed, because a CI log on a public repository is public.
+
+### Fixed
+
+- **`CONTRIBUTING.md` no longer tells contributors to add private terms to the public rule list.**
+  That instruction would have published the very identifiers the gate exists to keep out. It now
+  points at the external term list and states that the in-repository rules must stay generic.
+- **`CONTRIBUTING.md` and both READMEs described the gate inaccurately.** They now describe the
+  three separate scopes (source, package, history) and the bounded coverage of each.
 
 ## [1.0.0] - 2026-09-15
 

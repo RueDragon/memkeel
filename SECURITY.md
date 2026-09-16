@@ -121,11 +121,26 @@ still exists in the journal and in any snapshot or clone of it.
 
 ## The leak gate
 
-`npm run leak-scan` checks generic private-path and credential patterns, including its
-own source. Maintainer-specific literal terms belong in an external JSON array referenced
-by `MEMKEEL_LEAK_TERMS_FILE`, never in public source. Match values are not printed.
-The gate is best effort: review history, commit metadata, binary assets and distribution
-artifacts separately. A clean result does not prove the absence of personal information.
+Two commands guard a public release, and they cover different things:
+
+- `npm run leak-scan` checks the working tree, including its own source, for generic private-path,
+  credential and non-public-registry patterns.
+- `npm run pack-scan` packs with `npm pack`, unpacks the real tarball, verifies that every shipped
+  file is declared in `package.json` `files`, and scans the artifact with the same rules.
+
+Maintainer-specific literal terms belong in an external JSON array referenced by
+`MEMKEEL_LEAK_TERMS_FILE`, never in public source; CI can supply the same list from a repository
+secret. Neither command ever prints a matched value, because a CI log on a public repository is
+itself public. A missing or malformed term list fails the run instead of scanning without it.
+
+Both gates are best effort, and the coverage limits are printed on every run:
+
+- Files skipped as non-text (images, fonts, PDFs, archives and other binaries) are not read, so a
+  screenshot or a PDF can carry private data through an otherwise clean run.
+- Symbolic links are not followed, so the scan boundary is always the directory that was requested.
+- History is **not** covered automatically: earlier commits, dangling objects, forks, downloaded
+  copies and release assets need their own review. A clean result does not prove the absence of
+  personal information.
 
 Setup receipts and backups contain original host configuration and may include credentials.
 Keep the memory home private and outside source control. Uninstall restores receipt-backed

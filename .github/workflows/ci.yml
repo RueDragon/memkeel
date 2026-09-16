@@ -68,3 +68,36 @@ jobs:
             exit 1
           fi
           echo "dashboard/static is up to date"
+
+  privacy:
+    name: privacy gates (secret terms, packaged artifact)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # A maintainer's private identifiers must never be a file in the repository. When the
+      # optional repository secret is set it is staged outside the checkout for this run,
+      # and the value itself is never printed - only whether one was found.
+      - name: stage the private term list when one is configured
+        env:
+          MEMKEEL_LEAK_TERMS: ${{ secrets.MEMKEEL_LEAK_TERMS }}
+        run: |
+          if [ -n "$MEMKEEL_LEAK_TERMS" ]; then
+            printf '%s' "$MEMKEEL_LEAK_TERMS" > "$RUNNER_TEMP/private-terms.json"
+            echo "MEMKEEL_LEAK_TERMS_FILE=$RUNNER_TEMP/private-terms.json" >> "$GITHUB_ENV"
+            echo "private term list: configured"
+          else
+            echo "private term list: not configured - generic rules only"
+          fi
+
+      - name: leak gate (source tree)
+        run: npm run leak-scan
+
+      # A clean working tree says nothing about the tarball. This packs, unpacks, checks the
+      # shipped file list against package.json "files" and scans the artifact's text.
+      - name: leak gate (packaged artifact)
+        run: npm run pack-scan
