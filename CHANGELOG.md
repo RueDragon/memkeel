@@ -9,6 +9,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **One shared config contract (`lib/config.mjs`).** The CLI, the MCP server, the hook runner and
+  the web console each used to repeat the same read-and-normalise line, so a default or a
+  validation rule could drift between them. They now share one loader, one home precedence
+  (`--home`, then `MEMKEEL_HOME`, then `~/.memkeel` — the console previously ignored `--home`
+  entirely, so `memkeel dashboard --home X` served a different store than the command that started
+  it) and one validator: the same `inspectConfigGroups` the settings page already used.
+- **`memkeel config validate` / `config show --effective` / `config migrate --dry-run`.** All three
+  are read-only. `validate` prints every field problem at once plus notes for unknown and
+  deprecated keys, and exits non-zero when invalid. `show` prints the normalised values the
+  program will actually use with the source of each, masking paths unless `--reveal-paths` is
+  given. `migrate` prints the upgrade plan for a document written by an older shape. None of them
+  builds a transport, so an invalid config cannot create a directory or touch a host binding.
+- **A document schema separate from the release version.** `configSchema` records the shape of the
+  file; `version` records which release wrote it and is never rewritten by a migration.
 - **`npm run pack-scan`: a packaged-artifact gate.** A clean working tree says nothing about
   what `npm pack` ships, so this gate packs, unpacks the real tarball in a temporary directory,
   checks that every shipped file is declared in `package.json` `files`, and scans the unpacked
@@ -30,12 +44,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Config validation now agrees with the runtime on legacy keys.** A config that still uses the
+  old flat role keys (`habitsNote`, `projectRoot`, …) works at runtime, because the layout rules
+  read them. `config validate` therefore folds them the same way and reports a note instead of
+  rejecting a file the program runs happily. The settings editor stays stricter on purpose: it
+  writes the modern `roles` block, so it will not save an incomplete one.
+- **A store root that two fields disagree about is an error, not a guess.** `memoryRoot` is the
+  store and `vaultRoot` is what note paths resolve against; when both are present and differ, the
+  document is rejected with an explanation rather than one value silently winning.
 - **`leak-scan` reports and fails cleanly.** A missing or malformed private term list exits 2 with
   one actionable line instead of a raw stack trace. Diagnostics still print only the file, line
   and rule id; matched values are never echoed, because a CI log on a public repository is public.
 
 ### Fixed
 
+- **Both READMEs described `version` as the config schema version, and documented a
+  `hook.codexDeferredAdvisoryModels` key the code does not read.** `version` records the release
+  that wrote the file; the document shape is `configSchema`. The real key is
+  `hook.codexDeferAdvisory`, and model lists are ignored deliberately, so the text now says that.
 - **`CONTRIBUTING.md` no longer tells contributors to add private terms to the public rule list.**
   That instruction would have published the very identifiers the gate exists to keep out. It now
   points at the external term list and states that the in-repository rules must stay generic.

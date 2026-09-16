@@ -154,16 +154,30 @@ memkeel recall --query "storage backend" --workspace my-project
 
 Memkeel 只读取**一个 JSON 文件**：`~/.memkeel/config.json`。
 
-- 用 `--home <dir>` 覆盖该目录。
-- 用 `MEMKEEL_HOME` 环境变量覆盖它。
-- 同一目录下还存放 `bootstrap.md`、`event-schema.md`、`backups/` 和 `state/`。
+memory home 由一条所有命令共用的优先级决定：
+
+1. `--home <dir>`
+2. `MEMKEEL_HOME`
+3. 每用户默认位置 `~/.memkeel`
+
+同一目录下还存放 `bootstrap.md`、`event-schema.md`、`backups/` 和 `state/`。
 
 完整 schema 见 [`config.example.json`](config.example.json)。把它复制为
-`<memory home>/config.json` 并编辑，或者让 `memkeel init` 为你写入。
+`<memory home>/config.json` 并编辑，或者让 `memkeel init` 为你写入。下面三条命令只读检查，
+不会写入任何东西：
+
+```bash
+memkeel config validate           # 一次列出全部字段错误；不合法时以非零退出
+memkeel config show --effective   # 实际生效的归一化取值，以及每个值的来源
+memkeel config migrate --dry-run  # 旧格式文档的升级计划
+```
+
+`config show` 默认对路径脱敏；加 `--reveal-paths` 可输出完整路径。
 
 | 键 | 含义 |
 | --- | --- |
-| `version` | 配置 schema 版本。 |
+| `version` | 写入该文件的发布版本。迁移绝不会改写它。 |
+| `configSchema` | 该文档的结构版本。由 `memkeel config migrate` 补写或更新。 |
 | `memoryRoot` | memory root（存储根目录）的绝对路径。 |
 | `layout` | 布局模型。`neutral` 是现代默认值；更早的扁平布局仍然可读。 |
 | `roles` | 逻辑角色 → 相对路径的映射。见下文。 |
@@ -177,7 +191,7 @@ Memkeel 只读取**一个 JSON 文件**：`~/.memkeel/config.json`。
 | `recentDays` | “近期变更”窗口的天数宽度（默认 14）。 |
 | `budgetBytes` | 注入的 bootstrap 摘要的字节预算（默认 14000）。 |
 | `workspaceAliases` | 每个 workspace id 的额外路径别名，用于 worktree 和被移动过的检出目录。 |
-| `hook.codexDeferredAdvisoryModels` | 匹配这些模式的模型，其 Codex 工具建议会延迟到下一个 prompt。 |
+| `hook.codexDeferAdvisory` | 把 Codex 工具建议延迟到下一个 prompt（`true`，默认值）。只有 `false` 会关闭；模型列表被有意忽略。 |
 | `topics` | 已注册的主题路由：`{ id, workspace, title, aliases, path }`。 |
 | `catalogTopics` | 供历史 ingest 和主题目录使用的分组元数据。 |
 
@@ -296,6 +310,14 @@ MCP 暴露两个工具：
 | `init [--store DIR] [--obsidian-cli PATH] [--vault-name NAME]` | 创建一个空的、开箱即用的 memory home 和存储：目录布局、`config.json`、策略源、事件契约以及一个空的 `habits.md`。不触碰任何 agent。`--store` 设置存储根目录；Obsidian 相关标志用于预填可选的 `obsidian-cli` 后端。 |
 | `setup [--hosts codex,claude,zcode,dsh] [--dry-run] [--check] [--no-hooks] [--uninstall] [--force]` | 把存储绑定到已安装的宿主：注册 MCP 服务器、安装原生 hooks、发布共享策略。`--dry-run` 打印将要发生的变更；`--check` 报告漂移但不写入，并在存在漂移时以非零退出；`--no-hooks` 跳过 hook 安装；`--uninstall` 移除绑定并恢复备份。未安装的宿主会被检测到并**跳过**，同时给出清晰报告。如果某个宿主已有一个指向别处的 `agent_memory` MCP 服务器，该宿主会被**拒绝**而不是被静默重新绑定；请检查它，或加上 `--force` 重新运行。 |
 
+### 配置
+
+| 命令 | 作用 |
+| --- | --- |
+| `config validate` | 只读。校验整份文档，一次列出全部字段问题，并给出未知字段与旧写法的提示；不合法时以非零退出。它与设置页共用同一个校验器，因此 `memkeel config validate` 与控制台结论一致。 |
+| `config show [--effective] [--reveal-paths]` | 只读。打印程序实际会使用的归一化取值，并标明每个值的来源：文件、旧扁平键，或默认值。默认对路径脱敏，加 `--reveal-paths` 输出完整路径。 |
+| `config migrate --dry-run` | 只读。打印旧格式文档的升级计划：schema 号、折进 `roles` 的旧扁平角色键、从现有那一项推导出的存储根，以及缺失的默认值。不写入也不创建任何东西。 |
+
 ### 读取
 
 | 命令 | 作用 |
@@ -378,10 +400,11 @@ npm run dashboard:dev      # Vite dev server proxying /api to the running consol
 - **失败保持可见。** 失败的检查点会把它 payload 和最后一次错误保留在 hook 队列中并被
   重试；缺失的工作区永远不会被计为一次成功的收尾。
 
-在 Codex 上，当模型匹配 `hook.codexDeferredAdvisoryModels` 时，工具建议会被延迟，而不是
-在序列中途注入：Codex 会把额外的 hook 上下文变成一条 developer 消息，而这条消息可能落在
-一次工具调用与其结果之间，把 `tool_calls` 与工具回复拆开 —— 这种顺序会被严格的 provider
-拒绝。因此这些文本会等待，并搭上下一个 prompt。deny 决策绝不延迟。
+在 Codex 上，工具建议对**所有模型**一律延迟，而不是在序列中途注入：Codex 会把额外的 hook
+上下文变成一条 developer 消息，而这条消息可能落在一次工具调用与其结果之间，把 `tool_calls`
+与工具回复拆开 —— 这种顺序会被严格的 provider 拒绝。因此这些文本会等待，并搭上下一个
+prompt。deny 决策绝不延迟。模型名无法说明转发方是否接受交错的工具消息，所以旧模型列表一律
+忽略；唯一的关闭方式是 `hook.codexDeferAdvisory: false`。
 
 ## 事件与证据契约
 

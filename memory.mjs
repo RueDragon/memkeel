@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { bootstrap, recall, record, consolidate, refreshIndex, loadRoutes, registerTopic, ensureWorkspace, VERSION } from './lib/core.mjs';
@@ -11,7 +10,7 @@ import { capture, decideHabit, maintain } from './lib/lifecycle.mjs';
 import { checkpointHealth } from './lib/checkpoint-audit.mjs';
 import { recallLearning, checkOperation, loadEvents } from './lib/core.mjs';
 import { applyRetention, loadRetention, retentionCandidates } from './lib/retention.mjs';
-import { applyLayout } from './lib/layout.mjs';
+import { CONFIG_SCHEMA_VERSION, effectiveConfigView, loadConfig, planConfigMigration, resolveHome, validateConfig } from './lib/config.mjs';
 import { initStore } from './lib/init.mjs';
 import { planCodexBackfill, applyCodexBackfill } from './lib/ingest/backfill.mjs';
 import { startServer } from './dashboard.mjs';
@@ -19,6 +18,9 @@ import { startServer } from './dashboard.mjs';
 const argv = process.argv.slice(2);
 const first = argv.shift() ?? 'help';
 const command = ['--help', '-h'].includes(first) ? 'help' : first;
+// `config` takes a positional action (validate / show / migrate) before its flags, which the
+// generic flag loop below would otherwise reject as an unexpected argument.
+const subcommand = command === 'config' && argv.length && !argv[0].startsWith('--') ? argv.shift() : '';
 const options = {};
 while (argv.length) {
   const key = argv.shift();
@@ -26,13 +28,15 @@ while (argv.length) {
   options[key.slice(2)] = argv[0] && !argv[0].startsWith('--') ? argv.shift() : true;
 }
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const policyRoot = options.home ?? process.env.MEMKEEL_HOME ?? path.join(os.homedir(), '.memkeel');
+if (options.home === true) throw new Error('--home requires a directory');
+// One precedence for every entry point: --home, then MEMKEEL_HOME, then the per-user default.
+const { home: policyRoot, source: homeSource } = resolveHome({ home: typeof options.home === 'string' ? options.home : '' });
 const configPath = path.join(policyRoot, 'config.json');
 if (command === 'help') {
   console.log(`Agent Memory ${VERSION}\nbootstrap --cwd PATH --query TEXT [--workspace ID] [--json] [--all] [--audit]\nrecall --query TEXT [--workspace ID|NAME|PATH] [--history]\nworkspace-add --cwd DIR  (register the project at DIR as a workspace so it can hold topics and events)\nregister --topic WORKSPACE/KEY --workspace ID --title TEXT [--alias TEXT]\nrecord --file EVENT.json | record --stdin\ncapture --file INPUT.json | capture --stdin  (input: {event, evidence_text})\nhabit-decide --file INPUT.json | habit-decide --stdin\nconsolidate  (pending means remaining; pendingBefore means starting backlog)
 retain --candidates [--since ISO] [--limit N]  (read-only: automatic checkpoints still undecided)
 retain --file DECISIONS.json | retain --stdin  ({decisions:[{event_id, decision: drop|keep, reason}]}; soft drop, consolidates)
-retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover captures, consume, refresh index and catalog)\nindex [--force]\ndashboard [--port N]  (start the read-only local management UI)\ningest-plan [--since ISO] [--limit N] [--root DIR] [--auto-register]  (read-only history backfill report)\ningest-apply [--since ISO] [--limit N] [--root DIR] [--auto-register]  (write backfilled turns as reported contexts)\ninit [--store DIR] [--obsidian-cli PATH] [--vault-name NAME]  (create an empty memory home and store; touches no agent)\nsetup [--hosts codex,claude,zcode,dsh] [--dry-run] [--check] [--uninstall] [--no-hooks]  (bind the memory system into installed agents)\naudit\ndoctor\nbootstrap/recall are read-only; --audit explicitly persists bootstrap diagnostics.\nMCP: agent_memory_read for reads; agent_memory for authorized writes.\nNew notes and appends are written as bytes and read back for verification; the default backend needs no external service.\nPolicy config: ${configPath}`);
+retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover captures, consume, refresh index and catalog)\nindex [--force]\ndashboard [--port N]  (start the read-only local management UI)\ningest-plan [--since ISO] [--limit N] [--root DIR] [--auto-register]  (read-only history backfill report)\ningest-apply [--since ISO] [--limit N] [--root DIR] [--auto-register]  (write backfilled turns as reported contexts)\ninit [--store DIR] [--obsidian-cli PATH] [--vault-name NAME]  (create an empty memory home and store; touches no agent)\nsetup [--hosts codex,claude,zcode,dsh] [--dry-run] [--check] [--uninstall] [--no-hooks]  (bind the memory system into installed agents)\nconfig validate|show|migrate [--reveal-paths]  (read-only: validate the config, print the effective values and where each came from, or print the upgrade plan; writes nothing)\naudit\ndoctor\nbootstrap/recall are read-only; --audit explicitly persists bootstrap diagnostics.\nMCP: agent_memory_read for reads; agent_memory for authorized writes.\nNew notes and appends are written as bytes and read back for verification; the default backend needs no external service.\nPolicy config: ${configPath}`);
 } else if (command === 'init') {
   const store = options.store ?? path.join(policyRoot, 'store');
   console.log(JSON.stringify(initStore({ home: policyRoot, store: String(store), obsidianCli: options['obsidian-cli'] ?? '', vaultName: options['vault-name'] ?? '' }), null, 2));
@@ -42,6 +46,44 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
   for (const name of ['dry-run', 'check', 'uninstall', 'no-hooks', 'no-policy', 'all-hosts', 'force']) if (options[name]) passthrough.push(`--${name}`);
   passthrough.push('--home', policyRoot);
   process.exit(spawnSync(process.execPath, passthrough, { stdio: 'inherit' }).status ?? 1);
+} else if (command === 'config') {
+  // These commands read one JSON file and never build a transport, so an invalid document
+  // cannot create a directory or change a host binding.
+  const action = subcommand || 'validate';
+  if (!['validate', 'show', 'migrate'].includes(action)) {
+    console.error('Usage: memkeel config validate|show|migrate [--reveal-paths] [--home DIR]');
+    process.exit(2);
+  }
+  const base = { home: policyRoot, homeSource, file: configPath };
+  // A missing or unparseable document is a result to report, not a crash: this command exists
+  // to explain what is wrong with the configuration, including that there is not one.
+  let raw = null;
+  let readError = null;
+  if (!fs.existsSync(configPath)) readError = `${configPath} 不存在；先运行 memkeel init。`;
+  else {
+    try { raw = JSON.parse(fs.readFileSync(configPath, 'utf8')); }
+    catch (error) { readError = `${configPath} 无法解析：${error.message}`; }
+  }
+  if (readError) {
+    if (action === 'validate') {
+      console.log(JSON.stringify({ ...base, schemaVersion: CONFIG_SCHEMA_VERSION, ok: false, issues: [{ field: 'config', message: readError }], notes: [] }, null, 2));
+    } else {
+      console.error(`No usable config: ${readError}`);
+    }
+    process.exitCode = 1;
+  } else if (action === 'validate') {
+    const report = validateConfig(raw);
+    console.log(JSON.stringify({ ...base, schemaVersion: CONFIG_SCHEMA_VERSION, ok: report.ok, issues: report.issues, notes: report.notes }, null, 2));
+    if (!report.ok) process.exitCode = 1;
+  } else if (action === 'show') {
+    const view = effectiveConfigView(raw, { revealPaths: Boolean(options['reveal-paths']) });
+    console.log(JSON.stringify({ ...base, schemaVersion: CONFIG_SCHEMA_VERSION, effective: view.entries, rolesRoot: view.role, deprecatedKeys: view.deprecated,
+      maskNote: options['reveal-paths'] ? '路径原样输出。' : '路径已脱敏；加 --reveal-paths 输出完整路径。' }, null, 2));
+  } else {
+    const plan = planConfigMigration(raw);
+    console.log(JSON.stringify({ ...base, fromSchema: plan.fromSchema, toSchema: plan.toSchema, changes: plan.changes,
+      applied: false, dryRun: true, note: '只读计划：没有写入任何文件，也没有创建任何目录。' }, null, 2));
+  }
 } else if (!fs.existsSync(configPath)) {
   // Every other command needs an existing memory home. Reporting it here with one actionable
   // line beats the raw ENOENT stack trace a first-run user otherwise gets - which is exactly
@@ -49,7 +91,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
   console.error(`No memory home at ${policyRoot}.\nRun \`memkeel init\` first, then retry \`${command}\`.`);
   process.exit(1);
 } else {
-  const config = applyLayout({ ...JSON.parse(fs.readFileSync(configPath, 'utf8')), policyRoot });
+  const { config } = loadConfig(policyRoot);
   const transport = createTransport(config);
   try {
     let result;

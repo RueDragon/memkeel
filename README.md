@@ -162,16 +162,30 @@ memkeel recall --query "storage backend" --workspace my-project
 
 Memkeel reads **one JSON file**: `~/.memkeel/config.json`.
 
-- Override the directory with `--home <dir>`.
-- Override it with the `MEMKEEL_HOME` environment variable.
-- The same directory holds `bootstrap.md`, `event-schema.md`, `backups/` and `state/`.
+The memory home is resolved by one precedence, shared by every command:
+
+1. `--home <dir>`
+2. `MEMKEEL_HOME`
+3. the per-user default, `~/.memkeel`
+
+The same directory holds `bootstrap.md`, `event-schema.md`, `backups/` and `state/`.
 
 The schema is documented in full by [`config.example.json`](config.example.json). Copy it to
-`<memory home>/config.json` and edit it, or let `memkeel init` write it for you.
+`<memory home>/config.json` and edit it, or let `memkeel init` write it for you. Three read-only
+commands inspect it and write nothing:
+
+```bash
+memkeel config validate           # every field error at once; non-zero exit when invalid
+memkeel config show --effective   # normalised values and where each one came from
+memkeel config migrate --dry-run  # the upgrade plan for an older document
+```
+
+`config show` masks paths; add `--reveal-paths` to print them in full.
 
 | Key | Meaning |
 | --- | --- |
-| `version` | Config schema version. |
+| `version` | The release that wrote the file. Migrations never rewrite it. |
+| `configSchema` | The shape of this document. `memkeel config migrate` adds or updates it. |
 | `memoryRoot` | Absolute path to the memory root (the store root). |
 | `layout` | Layout model. `neutral` is the modern default; older flat layouts are still readable. |
 | `roles` | Logical role → relative path map. See below. |
@@ -185,7 +199,7 @@ The schema is documented in full by [`config.example.json`](config.example.json)
 | `recentDays` | Width of the "recent changes" window in days (default 14). |
 | `budgetBytes` | Byte budget for the injected bootstrap summary (default 14000). |
 | `workspaceAliases` | Extra path aliases per workspace id, for worktrees and moved checkouts. |
-| `hook.codexDeferredAdvisoryModels` | Model patterns for which Codex tool advisories are deferred to the next prompt. |
+| `hook.codexDeferAdvisory` | Defer Codex tool advisories to the next prompt (`true`, the default). Only `false` opts out; model lists are ignored on purpose. |
 | `topics` | Registered topic routes: `{ id, workspace, title, aliases, path }`. |
 | `catalogTopics` | Grouping metadata used by history ingest and the topic catalog. |
 
@@ -311,6 +325,14 @@ Every command takes optional `--home <dir>` to point at a different memory home.
 | `init [--store DIR] [--obsidian-cli PATH] [--vault-name NAME]` | Create an empty, ready-to-use memory home and store: directory layout, `config.json`, the policy source, the event contract and an empty `habits.md`. Touches no agent. `--store` sets the store root; the Obsidian flags pre-fill the optional `obsidian-cli` backend. |
 | `setup [--hosts codex,claude,zcode,dsh] [--dry-run] [--check] [--no-hooks] [--uninstall] [--force]` | Bind the store into installed hosts: register the MCP server, install native hooks, publish the shared policy. `--dry-run` prints intended changes; `--check` reports drift without writing and exits non-zero on drift; `--no-hooks` skips hook installation; `--uninstall` removes the bindings and restores backups. Uninstalled hosts are detected and **skipped** with a clear report. If a host already has an `agent_memory` MCP server that points somewhere else, that host is **refused** rather than silently rebound; review it, or re-run with `--force`. |
 
+### Config
+
+| Command | What it does |
+| --- | --- |
+| `config validate` | Read-only. Validates the whole document and prints every field problem at once, plus notes for unknown or deprecated keys, and exits non-zero when invalid. It shares its validator with the settings page, so `memkeel config validate` and the console reach the same verdict. |
+| `config show [--effective] [--reveal-paths]` | Read-only. Prints the normalised values the program will actually use, each with its source: the file, a legacy flat key, or a default. Paths are masked unless `--reveal-paths` is given. |
+| `config migrate --dry-run` | Read-only. Prints the upgrade plan for a document written by an older shape: the schema number, deprecated flat role keys folded into `roles`, a store root derived from the one that is present, and missing defaults. It writes nothing and creates nothing. |
+
 ### Reading
 
 | Command | What it does |
@@ -396,11 +418,12 @@ Guarantees worth knowing:
 - **Failures stay visible.** A failed checkpoint keeps its payload and last error in the
   hook queue and is retried; a missing workspace is never counted as a successful closeout.
 
-On Codex with a model matching `hook.codexDeferredAdvisoryModels`, tool advisories are deferred
-instead of injected mid-sequence: Codex turns extra hook context into a developer message,
-which can land between a tool call and its result and split `tool_calls` from the tool reply,
-an ordering strict providers reject. The text waits and rides the next prompt instead. Deny
-decisions are never deferred.
+On Codex, tool advisories are deferred for **every** model instead of being injected
+mid-sequence: Codex turns extra hook context into a developer message, which can land between a
+tool call and its result and split `tool_calls` from the tool reply, an ordering strict providers
+reject. The text waits and rides the next prompt instead. Deny decisions are never deferred. A
+model name cannot establish whether the forwarding provider accepts interleaved tool messages, so
+legacy model lists are ignored; `hook.codexDeferAdvisory: false` is the only opt-out.
 
 ## The event and evidence contract
 

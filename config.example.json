@@ -1,6 +1,9 @@
 {
   "_comment": "Example only. Real path: <policyRoot>/config.json. Code depends on logical roles, not physical paths.",
   "version": "1.0.0",
+  "_configSchema": "The shape of this document. `memkeel config migrate` adds or updates it; `version` above only records which release wrote the file.",
+
+  "configSchema": 1,
 
   "memoryRoot": "C:/Users/<you>/agent-memory",
   "layout": "neutral",

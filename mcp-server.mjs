@@ -1,16 +1,17 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { bootstrap, recall, record, consolidate, registerTopic, loadEvents, consumptionStatus } from './lib/core.mjs';
 import { capture, decideHabit, maintain } from './lib/lifecycle.mjs';
 import { createTransport } from './lib/storage/index.mjs';
 import { recallLearning, checkOperation } from './lib/core.mjs';
-import { applyLayout } from './lib/layout.mjs';
+import { loadConfig, resolveHome } from './lib/config.mjs';
 
+// Home precedence is shared with the CLI and the hook runner: an explicit --home wins over
+// MEMKEEL_HOME, which wins over the per-user default.
 const homeArg = process.argv.indexOf('--home');
-const root = homeArg >= 0 ? process.argv[homeArg + 1] : process.env.MEMKEEL_HOME ?? path.join(os.homedir(), '.memkeel');
-if (!root) throw new Error('--home requires a directory');
+if (homeArg >= 0 && !process.argv[homeArg + 1]) throw new Error('--home requires a directory');
+const { home: root } = resolveHome({ home: homeArg >= 0 ? process.argv[homeArg + 1] : '' });
 const tool = { name: 'agent_memory', description: `Shared Obsidian memory only. Read with agent_memory_read. Write with capture using this exact shape: { action: "capture", input: { event_id: "20260909-zcode-example-01", workspace: "my-project", topic: "my-project/service-profile", agent: "zcode", facts: [{ key: "verified-point", text: "A short verified conclusion." }], verification: ["State what was actually checked."] }, evidence_text: "A short description of the evidence checked." }. For a new topic only, first call { action: "register", input: { id: "my-project/service-profile", workspace: "my-project", title: "Service Profile", alias: "service profile" } }. register requires input.id, input.workspace and input.title; id must be workspace/key. Do not use topic or key instead of id. No arbitrary filesystem or shell access. habit_decide requires an explicit user quote in evidence. Use help for the full event contract.`,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   inputSchema: { type: 'object', additionalProperties: false, required: ['action'], properties: {
@@ -35,7 +36,7 @@ const readTool = { ...tool, name: 'agent_memory_read', description: 'Read-only s
     cwd: { type: 'string', description: 'Required for bootstrap: the actual absolute working directory, not the MCP server directory.' }, query: { type: 'string' },
     workspace: { type: 'string', description: 'Recall scope: workspace ID, display name or absolute path. For bootstrap, an absolute path here is accepted as a cwd alias; a display name alone is not enough.' }, history: { type: 'boolean' } } } };
 function dispatch(args) {
-  const config = applyLayout({ ...JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8')), policyRoot: root });
+  const { config } = loadConfig(root);
   const transport = createTransport(config);
   switch (args.action) {
     case 'help': return fs.readFileSync(path.join(root, 'event-schema.md'), 'utf8');

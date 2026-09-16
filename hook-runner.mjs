@@ -1,19 +1,18 @@
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { processHook } from './lib/hooks.mjs';
 import { drainCheckpoints } from './lib/checkpoints.mjs';
 import { createTransport } from './lib/storage/index.mjs';
-import { applyLayout } from './lib/layout.mjs';
+import { loadConfig, resolveHome } from './lib/config.mjs';
 
+// Home precedence is shared with the CLI and the MCP server.
 const homeArg = process.argv.indexOf('--home');
-const root = homeArg >= 0 ? process.argv[homeArg + 1] : process.env.MEMKEEL_HOME ?? path.join(os.homedir(), '.memkeel');
-if (!root) throw new Error('--home requires a directory');
+if (homeArg >= 0 && !process.argv[homeArg + 1]) throw new Error('--home requires a directory');
+const { home: root } = resolveHome({ home: homeArg >= 0 ? process.argv[homeArg + 1] : '' });
 try {
   const raw = fs.readFileSync(0, 'utf8');
   if (Buffer.byteLength(raw) > 4 * 1024 * 1024) throw new Error('Hook payload exceeds bounded input');
   const input = JSON.parse(raw);
-  const config = applyLayout({ ...JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8')), policyRoot: root });
+  const { config } = loadConfig(root);
   let result;
   for (let attempt = 0; attempt < 20; attempt++) {
     try { result = processHook(config, process.argv[2], input); break; }

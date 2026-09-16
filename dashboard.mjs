@@ -7,7 +7,7 @@ import {
   bootstrap, recall, refreshIndex, loadEvents, loadRoutes, reduceEvents,
   consumptionStatus, selectProbationary, VERSION,
 } from './lib/core.mjs';
-import { applyLayout } from './lib/layout.mjs';
+import { loadConfig as loadConfigFromDisk, resolveHome } from './lib/config.mjs';
 import { createTransport } from './lib/storage/index.mjs';
 import { readHabits, readManualHabits, preferenceProjection } from './lib/preferences.mjs';
 import { learningProjection, retention } from './lib/experience.mjs';
@@ -29,13 +29,16 @@ import { planCloseAction, planHabitDecision, planComposeEvent, executePlan, stat
 // Markdown. Host binding (`memkeel setup`) stays CLI-only because it rewrites other
 // applications' files.
 
-const root = process.env.MEMKEEL_HOME ?? path.join(os.homedir(), '.memkeel');
-const configPath = path.join(root, 'config.json');
+// The console honours the same home precedence as every other command: an explicit --home,
+// then MEMKEEL_HOME, then the per-user default. It used to ignore --home entirely, so
+// `memkeel dashboard --home X` served a different store than the command that started it.
+const homeArg = process.argv.indexOf('--home');
+const { home: root } = resolveHome({ home: homeArg >= 0 ? process.argv[homeArg + 1] : '' });
 const here = path.dirname(fileURLToPath(import.meta.url));
 const staticDir = path.join(here, 'dashboard', 'static');
 
 function loadConfig() {
-  return applyLayout({ ...JSON.parse(fs.readFileSync(configPath, 'utf8')), policyRoot: root });
+  return loadConfigFromDisk(root).config;
 }
 
 function sendJson(res, data, status = 200) {
