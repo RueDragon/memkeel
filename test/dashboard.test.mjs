@@ -214,6 +214,43 @@ test('the settings payload reports the effective collection policy instead of of
   assert.match(snapshot.collection.permanentDeletion, /物理删除未实现/);
 });
 
+test('the settings payload says which fields the file sets and which are the program fallback', (t) => {
+  const { config, loader } = fixture(t);
+  const file = path.join(config.policyRoot, 'config.json');
+  const write = (mutate) => {
+    const document = JSON.parse(fs.readFileSync(file, 'utf8'));
+    mutate(document);
+    fs.writeFileSync(file, JSON.stringify(document, null, 2));
+    return settingsSnapshot(loader());
+  };
+
+  // A field the file does not carry is in force because the program fell back, not because the user
+  // chose it — that is the distinction the page needs before offering to change it.
+  const removed = write((document) => { delete document.activeLimit; });
+  assert.equal(removed.provenance.activeLimit, 'fallback');
+
+  // A field the file does carry is the user's setting.
+  const set = write((document) => { document.activeLimit = 7; });
+  assert.equal(set.provenance.activeLimit, 'config-file');
+  assert.equal(set.groups.activeLimit, 7, 'the effective value and its origin must agree');
+
+  // A legacy flat role key also feeds the role map, so it counts as the file setting the field.
+  const legacy = write((document) => { delete document.roles.eventsRoot; document.eventsRoot = 'legacy-events'; });
+  assert.equal(legacy.provenance['roles.eventsRoot'], 'config-file');
+  const unset = write((document) => { delete document.roles.eventsRoot; delete document.eventsRoot; });
+  assert.equal(unset.provenance['roles.eventsRoot'], 'fallback');
+
+  // Every reported origin is one of the two states, and the reported set covers the editable fields:
+  // a field with no origin would leave the page unable to explain a value it is showing.
+  const snapshot = settingsSnapshot(loader());
+  const origins = Object.values(snapshot.provenance);
+  assert.ok(origins.length > 0);
+  assert.deepEqual([...new Set(origins)].sort(), ['config-file', 'fallback']);
+  for (const field of snapshot.numberFields) assert.ok(field.key in snapshot.provenance, `${field.key} needs an origin`);
+  for (const field of snapshot.roleFields) assert.ok(`roles.${field.key}` in snapshot.provenance, `roles.${field.key} needs an origin`);
+  for (const key of ['storage', 'memoryRoot', 'vaultRoot', 'layout']) assert.ok(key in snapshot.provenance, `${key} needs an origin`);
+});
+
 test('settings reports a store path that does not validate instead of failing', async (t) => {
   const { loader } = fixture(t);
   const config = loader();

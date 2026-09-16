@@ -29,6 +29,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   from there — extraction, not installation — and **that gap is closed**: the test now performs a real
   `npm install` into an empty prefix, asserts the package landed under `node_modules` before doing
   anything else, and was verified to fail with the original error when the `.ts` import is put back.
+- **The settings payload says where each editable value came from.** Every field the page can edit now
+  carries an origin — `config-file` if the file sets it, `fallback` if it is in force because the program
+  chose it. The page already showed the effective value; this is what lets it explain *why* that value is
+  what it is, which is the difference between a setting and a default. Only the origin is reported, never
+  a default *value*: several fallbacks are described in prose rather than as a literal, and inventing a
+  number here would create a second source of truth for something the validator already owns. A legacy
+  flat role key counts as the file setting the field, because it still feeds the role map. The rendering
+  is a follow-up; this commit is the contract and its test.
 - **A collection policy that actually stops collection.** `collection` in `config.json` decides, once,
   whether a conversation may be collected, and the answer is consulted by every layer that writes
   conversation text: the hook queue, checkpoint draining (queue → evidence), the access log, and
