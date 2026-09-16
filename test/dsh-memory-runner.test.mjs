@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { getEventListeners } from 'node:events';
-import { apply } from '../dsh-memory-plugin.mjs';
+import { apply, childEnv } from '../dsh-memory-plugin.mjs';
 
 async function fixture(t, source) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-hook-test-'));
@@ -101,6 +101,35 @@ test('spawn failure remains handled', async (t) => {
   assert.equal(h.warnings.length, 1);
 });
 
+// The rule behind Electron mode, covered on every platform. The integration test below can
+// only run under Electron itself, so this is its coverage alternative rather than a mock of
+// the spawn path: it pins exactly the decision that test observes end to end.
+test('Electron mode adds node mode to a copy, never to the parent environment', () => {
+  const base = { PATH: '/usr/bin', ELECTRON_RUN_AS_NODE: undefined };
+  const child = childEnv(base, true);
+  assert.equal(child.ELECTRON_RUN_AS_NODE, '1');
+  assert.notEqual(child, base, 'the parent environment object must not be handed to the child');
+  assert.equal(base.ELECTRON_RUN_AS_NODE, undefined, 'the parent must not be mutated');
+  assert.equal(base.PATH, '/usr/bin');
+});
+
+test('a non-Electron host passes its environment through untouched', () => {
+  const base = { PATH: '/usr/bin' };
+  const child = childEnv(base, false);
+  assert.equal(child, base);
+  assert.equal('ELECTRON_RUN_AS_NODE' in child, false);
+});
+
+test('an inherited node-mode value is overridden for the child and preserved in the parent', () => {
+  const base = { ELECTRON_RUN_AS_NODE: '0' };
+  const child = childEnv(base, true);
+  assert.equal(child.ELECTRON_RUN_AS_NODE, '1');
+  assert.equal(base.ELECTRON_RUN_AS_NODE, '0');
+});
+
+// Skipped outside Electron by construction: this asserts the real spawned child, which is
+// only reachable when the host process is Electron. See the childEnv tests above for the
+// platform-independent coverage of the same rule.
 test('Electron hook children use Node mode without changing the parent environment', { skip: !process.versions.electron }, async (t) => {
   const { runner } = await fixture(t, readInput + "console.log(JSON.stringify({hookSpecificOutput:{hookEventName:input.hook_event_name,permissionDecision:'deny',permissionDecisionReason:process.env.ELECTRON_RUN_AS_NODE}}));");
   const previous = process.env.ELECTRON_RUN_AS_NODE;

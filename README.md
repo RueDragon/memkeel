@@ -504,7 +504,7 @@ npm run leak-scan # node scripts/leak-scan.mjs  (the working tree)
 npm run pack-scan # node scripts/pack-scan.mjs   (the real `npm pack` artifact)
 ```
 
-- **`npm test`** runs the unit and integration suite (25 test files) over the layout model,
+- **`npm test`** runs the unit and integration suite (26 test files) over the layout model,
   storage adapters, event validation, ranking, search, retention, transcripts, dashboard writes,
   the dsh plugin bridge and the leak gates themselves.
 - **`npm run check`** runs `node --check` over every first-party `.mjs` file. Vendored code and

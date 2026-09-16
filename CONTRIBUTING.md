@@ -68,7 +68,7 @@ tokens and non-public package registries.
 
 ```console
 $ npm run leak-scan
-leak-scan: clean (144 files scanned)
+leak-scan: clean (145 files scanned)
 leak-scan: coverage: 10 non-text file(s) not inspected (.woff2 x10) - files that were not inspected are not covered by this result.
 ```
 

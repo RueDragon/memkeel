@@ -47,6 +47,21 @@ function base(agent, event) {
   };
 }
 
+/**
+ * The environment for a hook child process.
+ *
+ * Under Electron, `process.execPath` is the Electron binary rather than plain Node, so a
+ * child spawned to run the hook runner must be told to behave as Node. The host process
+ * keeps running as Electron, so the base environment is copied rather than mutated: a hook
+ * must not change the environment of the agent it is running inside.
+ *
+ * Exported and parameterised so the rule is unit-tested on every platform; the integration
+ * test that runs it for real only executes under Electron.
+ */
+export function childEnv(base, isElectron) {
+  return isElectron ? { ...base, ELECTRON_RUN_AS_NODE: '1' } : base;
+}
+
 function run(runner, host, input, timeoutMs, signal, memoryHome) {
   return new Promise((resolve, reject) => {
     const limit = 4 * 1024 * 1024;
@@ -55,7 +70,7 @@ function run(runner, host, input, timeoutMs, signal, memoryHome) {
     if (signal?.aborted) return reject(new Error('hook runner aborted before spawn'));
     const child = spawn(process.execPath, ['--experimental-strip-types', runner, host, ...(memoryHome ? ['--home', memoryHome] : [])], {
       cwd: input.cwd,
-      env: process.versions.electron ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env,
+      env: childEnv(process.env, Boolean(process.versions.electron)),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
