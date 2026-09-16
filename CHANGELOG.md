@@ -15,12 +15,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`--home`, then `MEMKEEL_HOME`, then `~/.memkeel` — the console previously ignored `--home`
   entirely, so `memkeel dashboard --home X` served a different store than the command that started
   it) and one validator: the same `inspectConfigGroups` the settings page already used.
-- **`memkeel config validate` / `config show --effective` / `config migrate --dry-run`.** All three
-  are read-only. `validate` prints every field problem at once plus notes for unknown and
+- **`memkeel config validate` / `config show --effective` / `config migrate`.** The first three
+  forms are read-only. `validate` prints every field problem at once plus notes for unknown and
   deprecated keys, and exits non-zero when invalid. `show` prints the normalised values the
   program will actually use with the source of each, masking paths unless `--reveal-paths` is
-  given. `migrate` prints the upgrade plan for a document written by an older shape. None of them
-  builds a transport, so an invalid config cannot create a directory or touch a host binding.
+  given. `migrate` prints the upgrade plan for a document written by an older shape, and
+  `migrate --apply` writes it: an empty plan is a no-op, the migrated document is validated before
+  it is written, the original bytes are copied to `backups/config-migrations/`, the result is read
+  back, and any mismatch rolls the file back. Re-running `--apply` is idempotent, and
+  `--dry-run --apply` together is refused as contradictory. `validate`, `show` and `migrate`
+  build no transport, so an invalid config cannot create a directory or touch a host binding.
 - **A document schema separate from the release version.** `configSchema` records the shape of the
   file; `version` records which release wrote it and is never rewritten by a migration.
 - **`npm run pack-scan`: a packaged-artifact gate.** A clean working tree says nothing about

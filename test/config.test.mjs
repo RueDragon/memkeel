@@ -13,8 +13,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  CONFIG_SCHEMA_VERSION, effectiveConfigView, inspectConfigGroups, loadConfig, planConfigMigration,
-  resolveHome, validateConfig,
+  CONFIG_SCHEMA_VERSION, applyConfigMigration, effectiveConfigView, inspectConfigGroups, loadConfig,
+  planConfigMigration, resolveHome, validateConfig,
 } from '../lib/config.mjs';
 import { settingsSnapshot } from '../lib/dashboard-data.mjs';
 import { applyLayout } from '../lib/layout.mjs';
@@ -393,4 +393,109 @@ test('config validate reports a missing memory home instead of crashing', (t) =>
   assert.equal(report.ok, false);
   assert.match(JSON.stringify(report.issues), /不存在/);
   assert.doesNotMatch(result.stderr, /\n\s+at /);
+});
+
+// ------------------------------------------------------------------ migration apply
+
+/** A legacy document: no schema number, and a role only present in the old flat spelling. */
+function legacyDocument(raw) {
+  const next = { ...raw, habitsNote: 'legacy-habits.md', roles: { ...raw.roles } };
+  delete next.roles.habitsNote;
+  delete next.configSchema;
+  return next;
+}
+
+test('apply migrates the document and keeps the original bytes as a rollback path', (t) => {
+  const { home, write, complete } = fixture(t);
+  const raw = legacyDocument(complete());
+  write(raw);
+  const before = fs.readFileSync(path.join(home, 'config.json'), 'utf8');
+
+  const outcome = applyConfigMigration(home);
+  assert.equal(outcome.applied, true);
+  assert.ok(outcome.changes.length > 0);
+  // The rollback is real: the backup holds exactly what was there before.
+  assert.equal(fs.readFileSync(outcome.backup, 'utf8'), before);
+
+  const after = JSON.parse(fs.readFileSync(path.join(home, 'config.json'), 'utf8'));
+  assert.equal(after.configSchema, CONFIG_SCHEMA_VERSION);
+  assert.equal(after.roles.habitsNote, 'legacy-habits.md');
+  assert.equal(after.habitsNote, undefined, 'the flat key must be folded, not duplicated');
+  assert.equal(after.version, '1.0.0', 'the release version is never rewritten');
+});
+
+test('apply is idempotent: a second run writes nothing and leaves no second backup', (t) => {
+  const { home, write, complete } = fixture(t);
+  write(legacyDocument(complete()));
+  assert.equal(applyConfigMigration(home).applied, true);
+  const settled = fs.readFileSync(path.join(home, 'config.json'), 'utf8');
+  const backups = fs.readdirSync(path.join(home, 'backups', 'config-migrations'));
+
+  const second = applyConfigMigration(home);
+  assert.equal(second.applied, false);
+  assert.equal(second.backup, null);
+  assert.match(second.reason, /无需迁移/);
+  assert.equal(fs.readFileSync(path.join(home, 'config.json'), 'utf8'), settled);
+  assert.deepEqual(fs.readdirSync(path.join(home, 'backups', 'config-migrations')), backups);
+});
+
+test('apply refuses to write a migration whose result would be invalid', (t) => {
+  const { home, write, complete } = fixture(t);
+  // A broken layout stays broken, so the migrated document would be invalid too and the
+  // original file must survive untouched.
+  write(legacyDocument(complete({ layout: 'not-a-layout' })));
+  const before = fs.readFileSync(path.join(home, 'config.json'), 'utf8');
+  assert.throws(() => applyConfigMigration(home), /校验未通过/);
+  assert.equal(fs.readFileSync(path.join(home, 'config.json'), 'utf8'), before);
+  assert.equal(fs.existsSync(path.join(home, 'backups', 'config-migrations')), false, 'nothing was written, so no backup either');
+});
+
+test('config migrate --apply writes, reports the backup, and exits zero', (t) => {
+  const { home, write, complete, run } = fixture(t);
+  write(legacyDocument(complete()));
+  const result = run('config', 'migrate', '--apply');
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.applied, true);
+  assert.equal(report.toSchema, CONFIG_SCHEMA_VERSION);
+  assert.ok(fs.existsSync(report.backup));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'config.json'), 'utf8')).configSchema, CONFIG_SCHEMA_VERSION);
+});
+
+test('config migrate --apply on an up-to-date document is a no-op that still exits zero', (t) => {
+  const { home, store, run } = fixture(t);
+  // `complete()` is a hand-written minimum. The canonical document is what `init` writes, and
+  // that is the shape a migration has to recognise as already current.
+  assert.equal(run('init', '--store', store).status, 0);
+  const before = fs.readFileSync(path.join(home, 'config.json'), 'utf8');
+  assert.deepEqual(planConfigMigration(JSON.parse(before)).changes, []);
+  const result = run('config', 'migrate', '--apply');
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.applied, false);
+  assert.equal(report.backup, null);
+  assert.equal(fs.readFileSync(path.join(home, 'config.json'), 'utf8'), before);
+});
+
+test('config migrate without --apply still writes nothing, and --apply is refused elsewhere', (t) => {
+  const { home, write, complete, run } = fixture(t);
+  write(legacyDocument(complete()));
+  const before = fs.readFileSync(path.join(home, 'config.json'), 'utf8');
+  const planned = run('config', 'migrate');
+  assert.equal(planned.status, 0);
+  assert.equal(JSON.parse(planned.stdout).dryRun, true);
+  assert.equal(fs.readFileSync(path.join(home, 'config.json'), 'utf8'), before, 'the default must stay read-only');
+
+  // --apply on an action that cannot write is a usage error, not a silent ignore.
+  const wrong = run('config', 'validate', '--apply');
+  assert.equal(wrong.status, 2);
+  assert.match(wrong.stderr, /Usage: memkeel config validate\|show\|migrate/);
+  assert.equal(fs.readFileSync(path.join(home, 'config.json'), 'utf8'), before);
+
+  // Asking for the plan and the write at once is contradictory, so it is refused rather than
+  // resolved by an arbitrary precedence.
+  const contradictory = run('config', 'migrate', '--dry-run', '--apply');
+  assert.equal(contradictory.status, 2);
+  assert.match(contradictory.stderr, /Usage: memkeel config/);
+  assert.equal(fs.readFileSync(path.join(home, 'config.json'), 'utf8'), before);
 });

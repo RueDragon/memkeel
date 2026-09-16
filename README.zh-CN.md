@@ -170,7 +170,12 @@ memory home 由一条所有命令共用的优先级决定：
 memkeel config validate           # 一次列出全部字段错误；不合法时以非零退出
 memkeel config show --effective   # 实际生效的归一化取值，以及每个值的来源
 memkeel config migrate --dry-run  # 旧格式文档的升级计划
+memkeel config migrate --apply    # 写入该计划：先备份，再回读校验
 ```
+
+`config validate`、`config show` 与 `config migrate --dry-run` 都不写入。唯一会写的是
+`config migrate --apply`：计划为空时它什么都不做；迁移结果校验不通过时它拒绝写入；写入前先把
+读到的原始字节复制到 `<memory home>/backups/config-migrations/`；回读不一致时自动回滚。
 
 `config show` 默认对路径脱敏；加 `--reveal-paths` 可输出完整路径。
 
@@ -316,7 +321,8 @@ MCP 暴露两个工具：
 | --- | --- |
 | `config validate` | 只读。校验整份文档，一次列出全部字段问题，并给出未知字段与旧写法的提示；不合法时以非零退出。它与设置页共用同一个校验器，因此 `memkeel config validate` 与控制台结论一致。 |
 | `config show [--effective] [--reveal-paths]` | 只读。打印程序实际会使用的归一化取值，并标明每个值的来源：文件、旧扁平键，或默认值。默认对路径脱敏，加 `--reveal-paths` 输出完整路径。 |
-| `config migrate --dry-run` | 只读。打印旧格式文档的升级计划：schema 号、折进 `roles` 的旧扁平角色键、从现有那一项推导出的存储根，以及缺失的默认值。不写入也不创建任何东西。 |
+| `config migrate [--dry-run]` | 只读。打印旧格式文档的升级计划：schema 号、折进 `roles` 的旧扁平角色键、从现有那一项推导出的存储根，以及缺失的默认值。不写入也不创建任何东西。 |
+| `config migrate --apply` | 写入该计划。计划为空时不做任何事；写入前先校验迁移后的文档；把原始字节复制到 `<memory home>/backups/config-migrations/`；回读不一致时自动回滚。重复执行是幂等的，`--dry-run --apply` 同时给出会以矛盾为由拒绝。 |
 
 ### 读取
 

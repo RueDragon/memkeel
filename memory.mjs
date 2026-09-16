@@ -10,7 +10,7 @@ import { capture, decideHabit, maintain } from './lib/lifecycle.mjs';
 import { checkpointHealth } from './lib/checkpoint-audit.mjs';
 import { recallLearning, checkOperation, loadEvents } from './lib/core.mjs';
 import { applyRetention, loadRetention, retentionCandidates } from './lib/retention.mjs';
-import { CONFIG_SCHEMA_VERSION, effectiveConfigView, loadConfig, planConfigMigration, resolveHome, validateConfig } from './lib/config.mjs';
+import { CONFIG_SCHEMA_VERSION, applyConfigMigration, effectiveConfigView, loadConfig, planConfigMigration, resolveHome, validateConfig } from './lib/config.mjs';
 import { initStore } from './lib/init.mjs';
 import { planCodexBackfill, applyCodexBackfill } from './lib/ingest/backfill.mjs';
 import { startServer } from './dashboard.mjs';
@@ -36,7 +36,7 @@ if (command === 'help') {
   console.log(`Agent Memory ${VERSION}\nbootstrap --cwd PATH --query TEXT [--workspace ID] [--json] [--all] [--audit]\nrecall --query TEXT [--workspace ID|NAME|PATH] [--history]\nworkspace-add --cwd DIR  (register the project at DIR as a workspace so it can hold topics and events)\nregister --topic WORKSPACE/KEY --workspace ID --title TEXT [--alias TEXT]\nrecord --file EVENT.json | record --stdin\ncapture --file INPUT.json | capture --stdin  (input: {event, evidence_text})\nhabit-decide --file INPUT.json | habit-decide --stdin\nconsolidate  (pending means remaining; pendingBefore means starting backlog)
 retain --candidates [--since ISO] [--limit N]  (read-only: automatic checkpoints still undecided)
 retain --file DECISIONS.json | retain --stdin  ({decisions:[{event_id, decision: drop|keep, reason}]}; soft drop, consolidates)
-retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover captures, consume, refresh index and catalog)\nindex [--force]\ndashboard [--port N]  (start the read-only local management UI)\ningest-plan [--since ISO] [--limit N] [--root DIR] [--auto-register]  (read-only history backfill report)\ningest-apply [--since ISO] [--limit N] [--root DIR] [--auto-register]  (write backfilled turns as reported contexts)\ninit [--store DIR] [--obsidian-cli PATH] [--vault-name NAME]  (create an empty memory home and store; touches no agent)\nsetup [--hosts codex,claude,zcode,dsh] [--dry-run] [--check] [--uninstall] [--no-hooks]  (bind the memory system into installed agents)\nconfig validate|show|migrate [--reveal-paths]  (read-only: validate the config, print the effective values and where each came from, or print the upgrade plan; writes nothing)\naudit\ndoctor\nbootstrap/recall are read-only; --audit explicitly persists bootstrap diagnostics.\nMCP: agent_memory_read for reads; agent_memory for authorized writes.\nNew notes and appends are written as bytes and read back for verification; the default backend needs no external service.\nPolicy config: ${configPath}`);
+retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover captures, consume, refresh index and catalog)\nindex [--force]\ndashboard [--port N]  (start the read-only local management UI)\ningest-plan [--since ISO] [--limit N] [--root DIR] [--auto-register]  (read-only history backfill report)\ningest-apply [--since ISO] [--limit N] [--root DIR] [--auto-register]  (write backfilled turns as reported contexts)\ninit [--store DIR] [--obsidian-cli PATH] [--vault-name NAME]  (create an empty memory home and store; touches no agent)\nsetup [--hosts codex,claude,zcode,dsh] [--dry-run] [--check] [--uninstall] [--no-hooks]  (bind the memory system into installed agents)\nconfig validate|show|migrate [--dry-run|--apply] [--reveal-paths]  (read-only by default: validate the config, print the effective values and where each came from, or print the upgrade plan; migrate --apply writes it after a backup and a readback)\naudit\ndoctor\nbootstrap/recall are read-only; --audit explicitly persists bootstrap diagnostics.\nMCP: agent_memory_read for reads; agent_memory for authorized writes.\nNew notes and appends are written as bytes and read back for verification; the default backend needs no external service.\nPolicy config: ${configPath}`);
 } else if (command === 'init') {
   const store = options.store ?? path.join(policyRoot, 'store');
   console.log(JSON.stringify(initStore({ home: policyRoot, store: String(store), obsidianCli: options['obsidian-cli'] ?? '', vaultName: options['vault-name'] ?? '' }), null, 2));
@@ -50,8 +50,10 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
   // These commands read one JSON file and never build a transport, so an invalid document
   // cannot create a directory or change a host binding.
   const action = subcommand || 'validate';
-  if (!['validate', 'show', 'migrate'].includes(action)) {
-    console.error('Usage: memkeel config validate|show|migrate [--reveal-paths] [--home DIR]');
+  // `--dry-run` is the default, so it is accepted for the plan's spelling of the command; asking
+  // for both would be contradictory rather than "apply wins".
+  if (!['validate', 'show', 'migrate'].includes(action) || ((options.apply || options['dry-run']) && action !== 'migrate') || (options.apply && options['dry-run'])) {
+    console.error('Usage: memkeel config validate|show|migrate [--dry-run|--apply] [--reveal-paths] [--home DIR]');
     process.exit(2);
   }
   const base = { home: policyRoot, homeSource, file: configPath };
@@ -79,6 +81,20 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
     const view = effectiveConfigView(raw, { revealPaths: Boolean(options['reveal-paths']) });
     console.log(JSON.stringify({ ...base, schemaVersion: CONFIG_SCHEMA_VERSION, effective: view.entries, rolesRoot: view.role, deprecatedKeys: view.deprecated,
       maskNote: options['reveal-paths'] ? '路径原样输出。' : '路径已脱敏；加 --reveal-paths 输出完整路径。' }, null, 2));
+  } else if (options.apply) {
+    // The only write in this command, and only when it is asked for by name. `--apply` carries its
+    // own safety: an empty plan writes nothing, the migrated document is validated before it is
+    // written, the exact bytes read are backed up first, and the result is read back and rolled
+    // back on any mismatch.
+    try {
+      const outcome = applyConfigMigration(policyRoot);
+      console.log(JSON.stringify({ ...base, fromSchema: raw.configSchema ?? null, toSchema: CONFIG_SCHEMA_VERSION,
+        applied: outcome.applied, backup: outcome.backup, changes: outcome.changes,
+        ...(outcome.applied ? {} : { reason: outcome.reason }) }, null, 2));
+    } catch (error) {
+      console.error(`config migrate --apply: ${error.message}`);
+      process.exitCode = 1;
+    }
   } else {
     const plan = planConfigMigration(raw);
     console.log(JSON.stringify({ ...base, fromSchema: plan.fromSchema, toSchema: plan.toSchema, changes: plan.changes,

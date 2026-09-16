@@ -178,7 +178,13 @@ commands inspect it and write nothing:
 memkeel config validate           # every field error at once; non-zero exit when invalid
 memkeel config show --effective   # normalised values and where each one came from
 memkeel config migrate --dry-run  # the upgrade plan for an older document
+memkeel config migrate --apply    # write that plan, after a backup and a readback
 ```
+
+`config validate`, `config show` and `config migrate --dry-run` never write. `config migrate
+--apply` is the only one that does, and it refuses to write an empty plan, refuses to write a
+document that would not validate, copies the exact bytes it read to
+`<memory home>/backups/config-migrations/` first, and rolls back if the readback disagrees.
 
 `config show` masks paths; add `--reveal-paths` to print them in full.
 
@@ -331,7 +337,8 @@ Every command takes optional `--home <dir>` to point at a different memory home.
 | --- | --- |
 | `config validate` | Read-only. Validates the whole document and prints every field problem at once, plus notes for unknown or deprecated keys, and exits non-zero when invalid. It shares its validator with the settings page, so `memkeel config validate` and the console reach the same verdict. |
 | `config show [--effective] [--reveal-paths]` | Read-only. Prints the normalised values the program will actually use, each with its source: the file, a legacy flat key, or a default. Paths are masked unless `--reveal-paths` is given. |
-| `config migrate --dry-run` | Read-only. Prints the upgrade plan for a document written by an older shape: the schema number, deprecated flat role keys folded into `roles`, a store root derived from the one that is present, and missing defaults. It writes nothing and creates nothing. |
+| `config migrate [--dry-run]` | Read-only. Prints the upgrade plan for a document written by an older shape: the schema number, deprecated flat role keys folded into `roles`, a store root derived from the one that is present, and missing defaults. It writes nothing and creates nothing. |
+| `config migrate --apply` | Writes that plan. It is a no-op when the plan is empty, validates the migrated document before writing, copies the original bytes to `<memory home>/backups/config-migrations/`, and rolls back if the readback disagrees. Re-running it is idempotent, and `--dry-run --apply` together is refused as contradictory. |
 
 ### Reading
 
