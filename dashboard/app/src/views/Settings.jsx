@@ -115,6 +115,47 @@ function ObsidianGuide({ obsidian }) {
   );
 }
 
+// 每个可编辑字段「值从哪来」。上面表单里显示的是程序此刻解析出来的生效值，这一块回答的是**为什么是它** ——
+// 你写在 config.json 里的，还是程序回退的。只有来源是「默认回退」的字段，改动才会真正改变行为；
+// 来源由后端 provenance 给出，页面不自己判断，也不在这里编造默认值（若干回退是散文式描述而非单一字面量，
+// 在下游再写一份数字就会和校验器形成第二个真相源）。
+function ProvenanceList({ settings }) {
+  const provenance = settings?.provenance;
+  if (!provenance) return null;
+  const rows = [
+    ...['storage', 'memoryRoot', 'vaultRoot', 'vaultName', 'obsidianCli', 'layout'].map((key) => [key, key]),
+    ...(settings.numberFields ?? []).map((field) => [field.key, `${field.key}（${field.label}）`]),
+    ...(settings.roleFields ?? []).map((field) => [`roles.${field.key}`, `${field.key}（${field.label}）`]),
+  ];
+  const valueOf = (key) => (key.startsWith('roles.')
+    ? settings.groups?.roles?.[key.slice('roles.'.length)]
+    : settings.groups?.[key]);
+  return (
+    <div>
+      <div className="muted">
+        上面各字段显示的是程序此刻解析出来的生效值。下面标出每个值来自哪里：<b>文件设置</b> 表示
+        config.json 里写了这一项，<b>默认回退</b> 表示文件没写、程序用了自己的选择。单位写在字段名后面。
+      </div>
+      <ul className="settings-paths" style={{ marginTop: 8 }}>
+        {rows.map(([key, label]) => (
+          <li key={key}>
+            <Tag color={provenance[key] === 'config-file' ? 'blue' : 'default'}>
+              {provenance[key] === 'config-file' ? '文件设置' : '默认回退'}
+            </Tag>
+            <span className="mono">{label}</span>
+            <span className="muted"> = {String(valueOf(key) ?? '')}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="muted" style={{ marginTop: 8 }}>
+        这一块只读。没有列在这里的键（例如 <span className="mono">topics</span>、
+        <span className="mono"> collection</span>、<span className="mono">workspaceAliases</span>）本页不改动，
+        见上面的「本页不改动的键」。
+      </div>
+    </div>
+  );
+}
+
 // 采集策略是**只读展示**：关闭采集会影响 hook、ingest 与访问日志，所以这一页报告「现在生效的是什么、
 // 由哪一层决定的」，而不是给一个看起来像开关、实际只管渲染的控件。数据来自后端的 privacyView()，
 // 与 `memkeel privacy show` 打印的是同一个函数，两边不可能说法不一致。
@@ -479,6 +520,13 @@ export default function Settings({ reload }) {
               </Col>
             ))}
           </Row>
+        </div>
+      </div>
+
+      <div className="panel" style={{ marginTop: 12 }}>
+        <h3 className="panel-title">生效值与来源（只读）</h3>
+        <div>
+          <ProvenanceList settings={settings} />
         </div>
       </div>
 
