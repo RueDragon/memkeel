@@ -154,6 +154,20 @@ test('a symlink cannot hide an overlap', (t) => {
   assert.ok(plan.issues.some((issue) => issue.kind === 'overlap'), 'a spelled-around overlap must still be refused');
 });
 
+test('an overlap is refused when the destination does not exist yet', (t) => {
+  const f = fixture(t);
+  const alias = path.join(f.root, 'alias-to-home');
+  try { fs.symlinkSync(f.home, alias, 'junction'); }
+  catch { t.skip('this host does not permit creating links'); return; }
+  // The destination is written through the alias and does not exist yet, while the source is the
+  // real path. Resolving symlinks only where the path exists leaves these two spellings unequal, so
+  // the overlap goes unnoticed and the copy lands inside the tree it is reading. This is not
+  // hypothetical: /var is a symlink on macOS, so every destination under os.tmpdir() misses.
+  const plan = planMigration(f.config, { to: path.join(alias, 'moved') });
+  assert.equal(plan.ok, false, 'a not-yet-existing destination under a link must still be compared');
+  assert.ok(plan.issues.some((issue) => issue.kind === 'overlap'));
+});
+
 test('an unusable plan is never executed', (t) => {
   const f = fixture(t);
   const plan = planMigration(f.config, { to: path.join(f.home, 'moved') });

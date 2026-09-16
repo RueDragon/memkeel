@@ -22,8 +22,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reports nothing and changes nothing. The invariant is covered by a test that injects a failure
   mid-copy and asserts the destination has no configuration.
 - **A migration refuses destinations it cannot do correctly.** A destination overlapping the source in
-  either direction (compared after resolving symlinks, so a link cannot hide one), a destination
-  inside the memkeel checkout, or a destination that already holds data. Recorded evidence keeps the
+  either direction, a destination inside the memkeel checkout, or a destination that already holds
+  data. Overlap is decided between canonical paths: symlinks are resolved through the nearest existing
+  ancestor, so a destination that does not exist yet is still compared in the same spelling as its
+  source. Resolving only where the path exists is not enough and fails quietly — on macOS
+  `os.tmpdir()` sits behind `/var -> /private/var`, so a destination under the temporary directory was
+  spelled differently from its source and a copy into itself was allowed. Recorded evidence keeps the
   paths it was written with, and workspace aliases travel verbatim.
 - **`memkeel backup create` / `backup verify` / `restore`.** An archive of the journal, the memory
   home's configuration, the shared policy source and the state that cannot be recomputed — the
