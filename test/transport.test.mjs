@@ -245,8 +245,11 @@ test('the root real path is cached, and caching it changes none of the checks', 
   const vaultRoot = path.join(root, 'vault');
   fs.mkdirSync(vaultRoot);
 
-  // Resolving a normal path works, and the result is the real path of the root (not the spelling given).
-  assert.equal(inside(vaultRoot, 'note.md'), path.join(fs.realpathSync(vaultRoot), 'note.md'));
+  // Resolving a normal path works, and the caller gets the path as spelled from the root it passed —
+  // `inside` returns `path.resolve(root, relative)`, not the root's real path. Asserting against
+  // `realpathSync` here would fail on macOS, where the temporary directory is spelled `/var/...` and
+  // resolves to `/private/var/...`; the difference is the whole point of keeping the two apart.
+  assert.equal(inside(vaultRoot, 'note.md'), path.resolve(vaultRoot, 'note.md'));
 
   // Containment is still enforced. Caching the root must not turn the escape check into a formality.
   assert.throws(() => inside(vaultRoot, '../escape.md'), /escapes root/);
