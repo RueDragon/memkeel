@@ -3,6 +3,10 @@
 # dashboard/static/ is deliberately NOT excluded: the built bundle is committed on purpose so
 # the console runs with no build step, and the image ships it.
 #
+# dashboard/app IS excluded: it is the Vite source and its lockfile, which the image never copies
+# and `package.json` "files" excludes from the published package for the same reason. Leaving it in
+# the context would only slow the build down.
+#
 # Kept deliberately explicit. A broad pattern such as `*.md` would also drop bootstrap.md and
 # event-schema.md, which the image needs (setup reads the shared policy source), so only the
 # files known to be unnecessary are excluded here.
@@ -10,7 +14,7 @@
 .github
 node_modules
 **/node_modules
-dashboard/app/dist
+dashboard/app
 test
 examples
 CONTRIBUTING.md

@@ -45,6 +45,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `setup --uninstall` fail closed or every host fail to start. A legacy receipt that recorded no
   home reports `unknown` drift rather than claiming agreement, and real drift is reported without
   failing the store, because the store itself is fine — the host bindings are stale.
+- **The published package is tested, not only packed.** `npm pack` had never been more than a
+  dry-run, so nobody had checked that what a user installs can actually run. A test now unpacks the
+  real tarball into an empty directory and exercises `init`, `config validate`, `doctor`, `bootstrap`
+  and a live console request from that copy, so the artifact is verified self-sufficient on every
+  platform CI runs. It also asserts that development-only material (`dashboard/app`, `test`,
+  `node_modules`) is not published.
+- **The container image ships exactly what the published package ships.** It copied `dashboard/`
+  wholesale, which pulled in the Vite app source and its lockfile that the runtime never reads; it
+  copies `dashboard/static/` only, and `.dockerignore` now excludes `dashboard/app` from the build
+  context. A test pins this by parsing the Dockerfile's `COPY` instructions, asserting every source
+  exists and that the whole `dashboard/` tree is not copied.
+- **The Docker section states what the image is, and what has not been verified.** It is a CLI and
+  storage tool rather than a service, which is why no compose file ships — the default command is a
+  health check, so `docker compose up` would report a healthy container as restarting forever. The
+  section also gives the Windows PowerShell form of the volume arguments (`${PWD}`, quoted), and
+  says plainly that the file set and the command contract are tested while an actual image build and
+  container run are not, because this environment has no container runtime.
 - **`npm run pack-scan`: a packaged-artifact gate.** A clean working tree says nothing about
   what `npm pack` ships, so this gate packs, unpacks the real tarball in a temporary directory,
   checks that every shipped file is declared in `package.json` `files`, and scans the unpacked

@@ -602,8 +602,35 @@ docker run --rm -v memkeel-home:/memkeel -v "$PWD/store:/store" memkeel \
   bootstrap --cwd /store --query "release checklist"
 ```
 
+Windows PowerShell 下卷参数的引号写法不同，`$PWD` 要写成 `${PWD}`：
+
+```powershell
+docker build -t memkeel .
+docker run --rm -v memkeel-home:/memkeel -v "${PWD}/store:/store" memkeel init --store /store
+docker run --rm -v memkeel-home:/memkeel -v "${PWD}/store:/store" memkeel
+```
+
+macOS 上直接使用上面的 bash 写法即可；Docker Desktop 的卷语法相同。
+
+### 这个镜像是什么，不是什么
+
+它是**命令行与存储工具，不是服务**。默认命令是健康检查，所以非零退出码是**关于你存储的结论**，
+而不是"进程崩了"。这正是它不附带 compose 文件的原因：`docker compose up` 会把一个完全健康的
+容器报成不断重启。如果你确实想把控制台暴露出来，请自己写 compose，并给控制台一条自己的常驻命令
+（`node memory.mjs dashboard --port 3247`），而不是复用 `doctor`。
+
 hooks 在容器中没有意义（那里没有 agent 宿主），因此容器里跳过 `setup`，改在真正运行 agent
-的机器上绑定宿主。绝不要把配置、存储或 token 烘焙进镜像。
+的机器上绑定宿主。绝不要把配置、存储、安装记录或 token 烘焙进镜像。
+
+### 已验证与未验证的部分
+
+上面这些命令由测试套件针对**发布包**（而不是仓库检出）验证：`npm pack` 后解包到一个空目录，
+再依次跑 `init` → `config validate` → `doctor` → `bootstrap`，并从解包副本发起一次真实的控制台
+请求。另有一个测试断言 Dockerfile 里每个 COPY 源路径都存在、且**没有**复制 `dashboard/app`，
+因此镜像发布的内容与 `npm pack` 发布的内容一致。
+
+**未验证的是容器本身**：本机没有容器运行时，因此没有执行过镜像构建，也没有在容器里跑过。
+请把"文件集合与命令契约"当作已验证，把"镜像构建"当作未验证。
 
 ## 项目布局
 

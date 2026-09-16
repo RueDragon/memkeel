@@ -6,6 +6,11 @@
 #
 # Storage: the `filesystem` backend only. `obsidian-cli` needs an installed, running Obsidian
 # GUI, which does not exist in a container, so it is out of scope for this image.
+#
+# Verification status: the file set below and the command contract in the comments are covered by
+# tests that run against the published package (`npm pack`, unpacked into an empty directory), and a
+# test asserts that every path copied here exists and that `dashboard/app` is not copied. An actual
+# image build and container run are NOT covered, because CI has no container runtime.
 FROM node:22-slim
 
 # Pinned so a later `docker build` cannot silently drop below the supported runtime
@@ -27,7 +32,10 @@ COPY bin/ ./bin/
 COPY lib/ ./lib/
 COPY scripts/ ./scripts/
 COPY vendor/ ./vendor/
-COPY dashboard/ ./dashboard/
+# Only the built console, not `dashboard/app`: the Vite source and its lockfile are development
+# material, and `package.json` "files" excludes them from the published package for the same reason.
+# The image therefore ships exactly what `npm pack` ships.
+COPY dashboard/static/ ./dashboard/static/
 COPY bootstrap.md event-schema.md config.example.json ./
 
 # The memory home holds config.json, bootstrap.md, event-schema.md, state/ and backups/.

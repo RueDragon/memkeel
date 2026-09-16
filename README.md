@@ -637,9 +637,39 @@ docker run --rm -v memkeel-home:/memkeel -v "$PWD/store:/store" memkeel \
   bootstrap --cwd /store --query "release checklist"
 ```
 
+On Windows PowerShell the volume argument needs its own quoting, and `$PWD` is `${PWD}`:
+
+```powershell
+docker build -t memkeel .
+docker run --rm -v memkeel-home:/memkeel -v "${PWD}/store:/store" memkeel init --store /store
+docker run --rm -v memkeel-home:/memkeel -v "${PWD}/store:/store" memkeel
+```
+
+On macOS the bash form works as written; Docker Desktop maps the same volume syntax.
+
+### What this image is, and is not
+
+It is a **CLI and storage tool**, not a service. The default command is a health check, so a
+non-zero exit is a finding about your store rather than a crashed process. That is why no compose
+file ships with it: `docker compose up` would report a perfectly healthy container as restarting
+forever. If you want the console reachable, write your own compose file and give the console its own
+long-running command (`node memory.mjs dashboard --port 3247`) instead of reusing `doctor`.
+
 Hooks are meaningless in a container (no agent host lives there), so skip `setup` there and bind
-the hosts from the machine that actually runs the agents. Never bake a config, a store or a
-token into the image.
+the hosts from the machine that actually runs the agents. Never bake a config, a store, a receipt
+or a token into the image.
+
+### What has been verified, and what has not
+
+The commands above are covered by the test suite against the **published package**, not the
+checkout: `npm pack`, unpack into an empty directory, then `init` → `config validate` → `doctor` →
+`bootstrap` → a live console request from the unpacked copy. A further test asserts that every path
+the Dockerfile copies exists and that `dashboard/app` is not copied, so the image ships exactly what
+`npm pack` ships.
+
+What is **not** verified is the container itself: this machine has no container runtime, so no image
+build and no container run has been performed. Treat the file set and the command contract as
+tested, and the image build as untested.
 
 ## Project layout
 
