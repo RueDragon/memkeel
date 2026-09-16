@@ -298,6 +298,47 @@ test('maintenance completes a capture interrupted after evidence append and befo
   assert.equal(loadEvents(config).length, 1);
   assert.deepEqual(maintain(config, transport).recoveredCaptures, []);
 });
+test('a cached index refresh does not rewrite the index, and any real change still does', (t) => {
+  const { config } = fixture(t);
+  const file = inside(config.policyRoot, 'state/index.json');
+  refreshIndex(config);
+  assert.equal(fs.existsSync(file), true, 'the first refresh must create the index');
+  const original = fs.readFileSync(file, 'utf8');
+
+  // Nothing changed: the file must be left byte-identical rather than rewritten on every read. The
+  // index holds the lowercased text of every note, so rewriting it costs time proportional to the
+  // whole store — which is what made a cached refresh slow.
+  const stamp = fs.statSync(file).mtimeMs;
+  refreshIndex(config);
+  refreshIndex(config);
+  assert.equal(fs.readFileSync(file, 'utf8'), original);
+  assert.equal(fs.statSync(file).mtimeMs, stamp, 'the file must not be touched at all');
+
+  // A real note change must still be persisted, and reported.
+  fs.appendFileSync(inside(config.vaultRoot, 'work/inbox/evidence.md'), '\nA line that changes the note.\n');
+  const changed = refreshIndex(config);
+  assert.equal(changed.io.changed, 1);
+  assert.notEqual(fs.readFileSync(file, 'utf8'), original);
+
+  // A stale route table must be rewritten even when no note changed, or the index would keep
+  // describing a workspace set that no longer exists.
+  const stale = JSON.parse(fs.readFileSync(file, 'utf8'));
+  stale.routes = [{ id: 'stale-workspace', aliases: [] }];
+  fs.writeFileSync(file, JSON.stringify(stale));
+  refreshIndex(config);
+  const rewritten = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.notDeepEqual(rewritten.routes, [{ id: 'stale-workspace', aliases: [] }]);
+  assert.deepEqual(rewritten.routes, refreshIndex(config).routes);
+
+  // `force` and `persist: false` keep their documented meanings.
+  const settled = fs.readFileSync(file, 'utf8');
+  refreshIndex(config, { force: true });
+  assert.notEqual(fs.readFileSync(file, 'utf8'), settled, 'force must rebuild and write');
+  fs.writeFileSync(file, '{"entries":{}}');
+  refreshIndex(config, { persist: false });
+  assert.equal(fs.readFileSync(file, 'utf8'), '{"entries":{}}', 'persist: false must never write');
+});
+
 test('conflicting title and workspace metadata stays in evidence but not routine context', (t) => {
   const { config } = fixture(t);
   const file = inside(config.vaultRoot, 'work/inbox/evidence.md');

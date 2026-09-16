@@ -121,26 +121,64 @@ What is *not* a problem, which is worth recording so effort does not go there: `
 (`/api/detail` and `/api/events` are 5-16 ms; the first `/api/overview` call pays the cold replay and
 then costs 13-70 ms).
 
+## Optimisation 1: a cached index refresh no longer rewrites the index
+
+`refreshIndex` already skipped re-parsing files whose `mtime` and size were unchanged, so the cost of a
+"cached" call was easy to overlook: it still serialised and wrote the whole index every time. Every
+entry carries the lowercased full text of its note, so that write costs time proportional to the
+entire store. The index is now only written when something actually changed, or when the route table
+differs from what is on disk, or when `force` is passed — `builtAt` therefore records when the index
+changed rather than when it was last looked at.
+
+Before and after, same machine, same seed, `refreshIndex (cached)`:
+
+| scale | before p50 | after p50 | before first | after first |
+| --- | --- | --- | --- | --- |
+| 1k events | 15.77 ms | **7.56 ms** | 15.9 ms | **9.0 ms** |
+| 10k events | 129.01 ms | **60.91 ms** | 127.1 ms | **51.4 ms** |
+
+That is 2.1× at both scales, which is the shape a fixed per-call cost should have.
+
+**The other rows are not part of this result.** They moved slightly in both directions between runs
+(`consolidate` 25.6 s → 32.9 s, `loadEvents` first 12.0 s → 7.2 s, `record` 8.48 s → 7.85 s,
+`settingsSnapshot` 23.6 ms → 15.6 ms) and this change does not touch the write, consolidate or journal
+paths at all. Those are run-to-run variance on a shared machine, and reading them as an improvement
+would be exactly the "felt" claim this file exists to avoid.
+
+**What is left in that 60.9 ms:** `JSON.parse` of the index file on every call — the file is ~15 MiB
+at 10k events, and the entries are needed by the caller. Removing it means caching the parsed index
+in memory and returning a shared object, which is a different risk class: a caller that mutates an
+entry would then corrupt the cache for every later call. That needs its own investigation, not a
+one-line change.
+
+The regression test pins the semantics rather than the timing: it asserts the index file is not
+touched when nothing changed, that a note change is still written and reported, that a stale route
+table is still rewritten, and that `force` and `persist: false` keep their documented meanings. It
+fails against the previous always-write behaviour.
+
 ## What has not been done
 
-**No optimisation has been made, so there is no before/after comparison yet.** That is deliberate. The
-plan requires that performance work not change retrieval or reduction semantics, and the obvious fix —
-caching parsed blocks per journal file keyed by `(mtimeMs, size)` so an append re-parses only the file
-that changed — has a real hazard: `validateEvent` is configuration-dependent, and the current cache
-fingerprint covers only the event files, not the configuration. A change there could start accepting
-an event it previously rejected, or reuse a parse that was validated against a different topic set.
-That needs its own design and its own tests; shipping it at the end of a session without them would be
-exactly the "felt improvement" the plan warns against.
+**One optimisation has been made (above), and the rest have not.** The plan requires that performance
+work not change retrieval or reduction semantics, so each step is taken on its own with the full suite
+behind it rather than several at once.
+
+**The write path — the actual bottleneck — is untouched.** The obvious fix, per-file parse caching
+keyed by `(mtimeMs, size)` so an append re-parses only the file that changed, has a real hazard:
+`validateEvent` is configuration-dependent, and the current cache fingerprint covers only the event
+files, not the configuration. A change there could start accepting an event it previously rejected, or
+reuse a parse that was validated against a different topic set. That needs its own design and its own
+tests; shipping it without them would be exactly the "felt improvement" this file exists to prevent.
 
 The order to try next, cheapest and safest first:
 
-1. `refreshIndex` does work when the fingerprint is unchanged — make the no-op actually a no-op, and
-   measure it. Low risk, and it is on every dashboard request.
-2. Per-file parse caching for the journal, with the validation semantics preserved: cache the parsed
+1. ~~Make the cached `refreshIndex` a real no-op.~~ Done — 2.1× at both scales.
+2. Remove the remaining per-call `JSON.parse` of the index by caching the parsed object in memory.
+   Requires establishing that no caller mutates an entry it was handed.
+3. Per-file parse caching for the journal, with the validation semantics preserved: cache the parsed
    JSON, re-run `validateEvent` each call, and extend the fingerprint to cover the configuration keys
    validation reads. Verify with the full suite plus the correctness block in `test/perf.test.mjs`.
-3. Only then consider the write path itself. Bounding `consolidate` and `bootstrap` may matter more
-   than the per-write cost.
+4. Only then the write path itself. Bounding `consolidate` and `bootstrap` may matter more than the
+   per-write cost.
 
 ## Not measured at all
 

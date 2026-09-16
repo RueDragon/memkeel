@@ -208,6 +208,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **A cached `refreshIndex` no longer rewrites the index.** It already skipped re-parsing files whose
+  `mtime` and size were unchanged, which made the remaining cost easy to overlook: it still serialised
+  and wrote the whole index on every call, and every entry carries the lowercased full text of its
+  note, so that write scaled with the entire store. The index is now written only when a file actually
+  changed, or when the route table differs from what is on disk, or when `force` is passed — so
+  `builtAt` records when the index changed rather than when it was last looked at. Measured on the
+  recorded baseline machine: 15.77 → 7.56 ms at 1k events and 129.01 → 60.91 ms at 10k, both 2.1×. The
+  regression test pins the semantics (no write when nothing changed; a note change, a stale route table,
+  `force` and `persist: false` all still behave as documented) rather than the timing, and it fails
+  against the previous always-write behaviour. See `PERFORMANCE.md` for the method and the numbers.
 - **Restore stays whole-file, and that is a decision rather than an omission.** Restoring only the
   fields we recognise would need a real parser per host format — TOML for Codex, JSON for Claude and
   ZCode, YAML for dsh — and this program ships with zero runtime dependencies by design. The
