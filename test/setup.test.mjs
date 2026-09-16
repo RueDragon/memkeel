@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 const cli = fileURLToPath(new URL('../memory.mjs', import.meta.url));
 function fixture(t) {
@@ -106,7 +106,7 @@ function multiFixture(t) {
   const env = { ...process.env, MEMKEEL_HOME: path.join(root, 'wrong-home'), CODEX_HOME: codex, ZCODE_HOME: zcode };
   const run = (...args) => spawnSync(process.execPath, [cli, ...args, '--home', home], { env, encoding: 'utf8', windowsHide: true });
   assert.equal(run('init').status, 0);
-  return { root, home, codex, zcode, run };
+  return { root, home, codex, zcode, env, run };
 }
 
 test('check reports drift and writes nothing at all', (t) => {
@@ -342,4 +342,41 @@ test('setup names the operation it is performing', (t) => {
   assert.equal(JSON.parse(run('setup', '--hosts', 'codex', '--check').stdout).intent.kind, 'rebind');
 
   assert.equal(JSON.parse(run('setup', '--hosts', 'codex', '--uninstall').stdout).intent.kind, 'uninstall');
+});
+
+test('rewriting a host config keeps its permissions', { skip: process.platform === 'win32' ? 'Windows reports a synthesised mode and chmod only toggles the read-only bit, so a 0600 assertion cannot hold there; the same path runs on Linux and macOS in CI' : false }, (t) => {
+  const { host, home, run } = fixture(t);
+  const config = path.join(host, 'config.toml');
+  fs.writeFileSync(config, 'token = "secret"\n', { mode: 0o600 });
+  fs.chmodSync(config, 0o600);
+  assert.equal(fs.statSync(config).mode & 0o777, 0o600);
+
+  assert.equal(run('setup', '--hosts', 'codex').status, 0);
+  // Host configuration can carry credentials; binding it must not widen who can read it.
+  assert.equal(fs.statSync(config).mode & 0o777, 0o600);
+
+  // The pre-install backup holds the same bytes, so it must not be more readable than the original.
+  const backupRoot = path.join(home, 'backups');
+  const [dir] = fs.readdirSync(backupRoot).filter((name) => name.startsWith('setup-'));
+  const [backup] = fs.readdirSync(path.join(backupRoot, dir));
+  assert.equal(fs.readFileSync(path.join(backupRoot, dir, backup), 'utf8'), 'token = "secret"\n');
+  assert.equal(fs.statSync(path.join(backupRoot, dir, backup)).mode & 0o777, 0o600);
+});
+
+test('two concurrent setups both keep their receipt entries', async (t) => {
+  const { home, env } = multiFixture(t);
+  const runSetup = (hosts) => new Promise((resolve) => {
+    const child = spawn(process.execPath, [cli, 'setup', '--hosts', hosts, '--home', home], { env, windowsHide: true, stdio: 'ignore' });
+    child.on('close', (code) => resolve(code));
+  });
+
+  // Both processes read the receipt, rewrite host files and record what they did. Writing each
+  // one's own in-memory copy would lose the other's entries - and with them the pre-install bytes
+  // that are the only way to restore those files.
+  const codes = await Promise.all([runSetup('codex'), runSetup('zcode')]);
+  assert.deepEqual(codes, [0, 0]);
+
+  const files = Object.keys(receiptOf(home).files);
+  assert.ok(files.some((file) => file.includes('codex')), `no codex entry in ${JSON.stringify(files)}`);
+  assert.ok(files.some((file) => file.includes('zcode')), `no zcode entry in ${JSON.stringify(files)}`);
 });

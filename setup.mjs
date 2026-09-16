@@ -17,8 +17,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { sha, atomicJson } from './lib/transport.mjs';
-import { RECEIPT_FORMAT, describeIntent, readInstallReceipt } from './lib/install-receipt.mjs';
+import { sha, atomicJson, withLock, writeFilePreservingMode } from './lib/transport.mjs';
+import { RECEIPT_FORMAT, describeIntent, dropReceiptEntry, mergeReceiptEntry, readInstallReceipt } from './lib/install-receipt.mjs';
 
 const source = path.dirname(fileURLToPath(import.meta.url));
 // The receipt records which release wrote it, so a later run can tell an upgrade from a re-run.
@@ -64,6 +64,41 @@ if (previousReceipt.malformed) {
 const legacyReceipt = previousReceipt.legacy;
 const receipt = previousReceipt.exists ? { ...previousReceipt, files: { ...previousReceipt.files } } : { files: {} };
 
+// Why the restore is whole-file rather than field-level.
+//
+// Restoring only the fields we recognise would need a real parser for each host's format - TOML for
+// Codex, JSON for Claude and ZCode, YAML for dsh - and this program ships with zero runtime
+// dependencies by design. The alternative, cutting a field back out of the document with a regular
+// expression, cannot tell a key from a string that looks like one, and a restore that guesses
+// boundaries would corrupt the very file it is trying to repair. So the conservative rule stands:
+// keep the exact bytes from before the install, restore them only when the file is still in a state
+// this install produced, and refuse - for a human to resolve - otherwise.
+//
+// A dedicated lock root, so this never contends with the memory writer lock: `setup` rewrites other
+// applications' files, not the store, and a running checkpoint drain must not block it.
+const receiptLockRoot = path.join(memoryHome, 'state', 'setup-lock');
+
+/**
+ * Read-modify-write the receipt under a lock.
+ *
+ * Two concurrent `setup` runs would otherwise each write their whole in-memory copy, and the loser's
+ * entries - together with the `before` bytes of files it changed - would be lost. Re-reading inside
+ * the lock is what makes the update additive rather than last-writer-wins.
+ */
+function updateReceipt(build) {
+  withLock(receiptLockRoot, () => {
+    const current = readInstallReceipt(memoryHome);
+    if (current.malformed) throw new Error(`The installation receipt became unreadable during this run (${current.file}): ${current.malformed}`);
+    const draft = build(current);
+    atomicJson(receiptFile, draft);
+    // Keep the in-memory view in step with the disk, so the uninstall path reads what is recorded.
+    for (const key of Object.keys(receipt)) delete receipt[key];
+    Object.assign(receipt, draft);
+  });
+}
+
+const receiptMeta = () => ({ format: RECEIPT_FORMAT, version: packageVersion, memoryHome, scope: selected });
+
 function writeIfChanged(file, next, label) {
   const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
   if (old === next) { report.push({ label, file, changed: false }); return; }
@@ -81,24 +116,19 @@ function writeIfChanged(file, next, label) {
   // The file path is part of the backup name: several files share one label (each dsh
   // profile writes `dsh-hooks-*`), and a colliding name silently reduced the backup to
   // whichever file happened to be written last.
-  if (old) fs.writeFileSync(path.join(backupDir, `${label}-${sha(file).slice(0, 8)}${path.extname(file) || '.txt'}`), old, 'utf8');
+  if (old) writeFilePreservingMode(path.join(backupDir, `${label}-${sha(file).slice(0, 8)}${path.extname(file) || '.txt'}`), old, { modeFrom: file });
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') !== old) throw new Error(`Concurrent edit detected: ${file}`);
   const before = fs.existsSync(file) ? old : null;
-  fs.writeFileSync(file, next, 'utf8');
+  // Replacing a host configuration must keep its permissions: these files can carry credentials,
+  // and a rewrite that widened the mode would expose them.
+  writeFilePreservingMode(file, next);
   if (fs.readFileSync(file, 'utf8') !== next) throw new Error(`Readback mismatch: ${file}`);
   // The receipt is recorded after the file, never before. A receipt that claims an installed state
   // the filesystem does not have would make every later run refuse that file, so a crash between
   // the two writes must leave the receipt behind rather than ahead of reality.
   if (!uninstall) {
-    const previous = receipt.files[file];
-    receipt.format = RECEIPT_FORMAT;
-    receipt.version = packageVersion;
-    receipt.memoryHome = memoryHome;
-    receipt.scope = selected;
-    receipt.at = new Date().toISOString();
-    receipt.files[file] = { label, before: previous?.before ?? before, after: next };
-    atomicJson(receiptFile, receipt);
+    updateReceipt((current) => mergeReceiptEntry(current, file, { label, before, after: next }, receiptMeta()));
   }
 }
 function skip(label, reason) { report.push({ label, skipped: true, reason }); }
@@ -310,11 +340,11 @@ for (const id of selected) {
         if (dryRun || check) continue;
         if (row.before === null) fs.rmSync(file, { force: true });
         else {
-          fs.writeFileSync(file, row.before, 'utf8');
+          // Restoring must also keep the permissions the file had before the install.
+          writeFilePreservingMode(file, row.before);
           if (fs.readFileSync(file, 'utf8') !== row.before) throw new Error(`Restore readback mismatch: ${file}`);
         }
-        delete receipt.files[file];
-        atomicJson(receiptFile, receipt);
+        updateReceipt((current) => dropReceiptEntry(current, file, receiptMeta()));
       }
       continue;
     }

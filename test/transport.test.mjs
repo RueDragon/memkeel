@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { VaultTransport, inside } from '../lib/transport.mjs';
+import { VaultTransport, inside, atomicJson, existingMode, writeFilePreservingMode } from '../lib/transport.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lu-memory-transport-'));
@@ -186,4 +186,55 @@ test('a failed create removes the partial note instead of leaving it behind', (t
   transport.read = () => 'stale vault view';
   assert.throws(() => transport.create('partial.md', '# New'), /readback mismatch/i);
   assert.equal(fs.existsSync(path.join(config.vaultRoot, 'partial.md')), false);
+});
+
+// --------------------------------------------------------------- permissions (DEP-02)
+
+test('a rewrite keeps the permissions of the file it replaces', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-mode-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, 'config.toml');
+  fs.writeFileSync(file, 'model = "demo"\n');
+  const before = existingMode(file);
+  assert.equal(typeof before, 'number');
+  writeFilePreservingMode(file, 'model = "demo"\nbound\n');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'model = "demo"\nbound\n');
+  // The replacement is a fresh file; without preservation it would take the process default.
+  assert.equal(existingMode(file), before);
+});
+
+test('a file that does not exist yet is created with the platform default', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-mode-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  assert.equal(existingMode(path.join(root, 'absent')), null);
+  const file = path.join(root, 'nested', 'new.toml');
+  writeFilePreservingMode(file, 'fresh\n');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'fresh\n');
+  assert.equal(typeof existingMode(file), 'number');
+});
+
+test('atomicJson keeps the mode of the file it atomically replaces', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-mode-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, 'receipt.json');
+  atomicJson(file, { format: 1 });
+  const before = existingMode(file);
+  atomicJson(file, { format: 1, files: {} });
+  // rename keeps the source file's mode, so the temp file has to be created with the target's.
+  assert.equal(existingMode(file), before);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { format: 1, files: {} });
+});
+
+test('a restrictive mode survives a rewrite', { skip: process.platform === 'win32' ? 'Windows reports a synthesised mode and chmod only toggles the read-only bit, so a 0600 assertion cannot hold there; the same path runs on Linux and macOS in CI' : false }, (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-mode-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, 'credentials.toml');
+  fs.writeFileSync(file, 'token = "secret"\n', { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+  assert.equal(existingMode(file), 0o600);
+  writeFilePreservingMode(file, 'token = "secret"\nbound\n');
+  // Host configuration can carry credentials, so widening 0600 to the umask default would leak it.
+  assert.equal(existingMode(file), 0o600);
+  atomicJson(file, { token: 'secret' });
+  assert.equal(existingMode(file), 0o600);
 });

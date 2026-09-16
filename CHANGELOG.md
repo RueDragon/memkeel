@@ -66,6 +66,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Restore stays whole-file, and that is a decision rather than an omission.** Restoring only the
+  fields we recognise would need a real parser per host format — TOML for Codex, JSON for Claude and
+  ZCode, YAML for dsh — and this program ships with zero runtime dependencies by design. The
+  alternative, cutting a field back out of the document with a regular expression, cannot tell a key
+  from a string that looks like one, and a restore that guesses boundaries would corrupt the file it
+  is meant to repair. So the conservative rule stands: keep the exact bytes from before the install,
+  restore them only while the file is still in a state this install produced, and otherwise refuse
+  for a human to resolve.
 - **Config validation now agrees with the runtime on legacy keys.** A config that still uses the
   old flat role keys (`habitsNote`, `projectRoot`, …) works at runtime, because the layout rules
   read them. `config validate` therefore folds them the same way and reports a note instead of
@@ -80,6 +88,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Rewriting a host configuration no longer changes who can read it.** The atomic replace wrote a
+  temporary file and renamed it over the target, and rename keeps the *source* file's mode, so a
+  config that was `0600` came back with the process default. Host configuration can carry
+  credentials, so a widened mode would expose exactly what the installation receipt and its backups
+  exist to protect. The mode is now read from the target and applied to the replacement, and the
+  same rule covers the pre-install backups, which hold the original bytes.
+- **Two concurrent `setup` runs no longer lose each other's receipt entries.** Each run wrote its
+  whole in-memory copy, so the loser's entries — and the pre-install bytes they hold, which are the
+  only way to restore those files — were dropped. The receipt is now re-read inside a lock and
+  merged, so the update is additive.
 - **An interrupted `setup` no longer bricks a host binding.** The receipt used to be written
   *before* the file it describes, so a crash in between left a receipt claiming an installed state
   the filesystem did not have. Because the write guard only accepted the "installed" state, every

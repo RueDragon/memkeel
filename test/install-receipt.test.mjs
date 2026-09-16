@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { RECEIPT_FORMAT, bindingDrift, describeIntent, launcherReport, readInstallReceipt, receiptPath } from '../lib/install-receipt.mjs';
+import { RECEIPT_FORMAT, bindingDrift, describeIntent, dropReceiptEntry, launcherReport, mergeReceiptEntry, readInstallReceipt, receiptPath } from '../lib/install-receipt.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-receipt-'));
@@ -130,7 +130,70 @@ test('no receipt and an unusable receipt are distinct states', (t) => {
   assert.equal(bindingDrift(readInstallReceipt(home), home).status, 'unknown');
 });
 
-// ------------------------------------------------------------------ launcher
+// ------------------------------------------------------------------ merge and drop
+
+test('recording a second file keeps the first one, and its pre-install bytes', (t) => {
+  const { home, write, receipt } = fixture(t);
+  write(receipt());
+  const first = Object.keys(receipt().files)[0];
+  const current = readInstallReceipt(home);
+
+  const merged = mergeReceiptEntry(current, path.join(home, 'hooks.json'), { label: 'codex-hooks', before: null, after: 'bound' }, { memoryHome: home, scope: ['codex'] });
+  // The lost-update case: writing only our own in-memory copy would drop the first entry and the
+  // `before` bytes that are the only way to restore it.
+  assert.equal(merged.files[first].before, 'model = "x"\n');
+  assert.equal(merged.files[first].after, 'model = "x"\nbound\n');
+  assert.equal(merged.files[path.join(home, 'hooks.json')].after, 'bound');
+  assert.equal(Object.keys(merged.files).length, 2);
+});
+
+test('the first pre-install bytes always win over a later record', (t) => {
+  const { home, write, receipt } = fixture(t);
+  write(receipt());
+  const file = Object.keys(receipt().files)[0];
+  // A re-run records the file again; `before` must stay the state from before the *first* install,
+  // because that is what an uninstall has to restore.
+  const merged = mergeReceiptEntry(readInstallReceipt(home), file, { label: 'codex-mcp', before: 'something-else\n', after: 'rewritten' }, { memoryHome: home });
+  assert.equal(merged.files[file].before, 'model = "x"\n');
+  assert.equal(merged.files[file].after, 'rewritten');
+});
+
+test('a missing record is filled in, and a null before is preserved as null', (t) => {
+  const { home, write, receipt } = fixture(t);
+  write(receipt());
+  const file = Object.keys(receipt().files)[0];
+  const merged = mergeReceiptEntry(readInstallReceipt(home), path.join(home, 'settings.json'), { label: 'claude-hooks', before: null, after: '{"hooks":{}}' }, { memoryHome: home });
+  // `null` means the file did not exist before the install, so an uninstall must delete it.
+  assert.equal(merged.files[path.join(home, 'settings.json')].before, null);
+  assert.equal(typeof merged.files[file].before, 'string');
+});
+
+test('merge and drop stamp the receipt and update only their own row', (t) => {
+  const { home, write, receipt } = fixture(t);
+  write(receipt());
+  const file = Object.keys(receipt().files)[0];
+  const other = path.join(home, 'other.json');
+  const seeded = mergeReceiptEntry(readInstallReceipt(home), other, { label: 'x', before: null, after: 'y' }, { memoryHome: home, scope: ['codex'] });
+  assert.equal(seeded.format, RECEIPT_FORMAT);
+  assert.equal(seeded.memoryHome, home);
+  assert.deepEqual(seeded.scope, ['codex']);
+  assert.equal(typeof seeded.at, 'string');
+
+  const dropped = dropReceiptEntry({ exists: true, ...seeded }, file, { memoryHome: home });
+  assert.deepEqual(Object.keys(dropped.files), [other]);
+});
+
+test('merge and drop never mutate the receipt they were handed', (t) => {
+  const { home, write, receipt } = fixture(t);
+  write(receipt());
+  const file = Object.keys(receipt().files)[0];
+  const current = readInstallReceipt(home);
+  const snapshot = JSON.stringify(current);
+  mergeReceiptEntry(current, path.join(home, 'a.json'), { label: 'a', before: null, after: 'a' }, { memoryHome: home });
+  dropReceiptEntry(current, file, { memoryHome: home });
+  // The caller holds the on-disk view for the rest of the run; mutating it would corrupt it.
+  assert.equal(JSON.stringify(current), snapshot);
+});
 
 test('the launcher report says whether every bound path still exists', (t) => {
   const { root } = fixture(t);
