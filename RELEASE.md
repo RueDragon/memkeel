@@ -4,10 +4,11 @@ How a release is prepared, what has to be true before it goes out, and how an ex
 upgraded or rolled back. The checks live in `scripts/release-check.mjs`; this file explains what they
 mean and what is deliberately left to a human.
 
-## Known blocker: the published package cannot run when installed
+## Fixed: the published package could not run when installed
 
-**`npm install memkeel` produces a package whose CLI fails on every command.** This was found by the
-release check below, on 2026-09-16, and it is not fixed yet.
+**`npm install memkeel` used to produce a package whose CLI failed on every command.** The release check
+found it on 2026-09-16 and it is fixed. The section is kept because the failure is invisible from a
+checkout, and because the tripwire that catches it is worth knowing about.
 
 ```
 Error [ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING]: Stripping types is currently unsupported for
@@ -31,18 +32,21 @@ path is never under `node_modules`. The header comment even states the intent �
 the repository the test would pass while a real install failed" — but extraction still is not
 installation.
 
-Options, none of them taken yet because each needs its own verification:
+**Fixed** by generating `.mjs` files from the pinned `.ts` sources with Node's own type stripper
+(`scripts/build-vendor.mjs`) and importing those, rather than by rewriting the vendored code by hand —
+it is 28 KB of real TypeScript, and hand-editing it would have diverged from the upstream copy
+`THIRD_PARTY.md` pins. Using Node's own stripper means the published module is produced by the same
+mechanism that was already stripping the types in memory when the program ran from a checkout, so its
+behaviour is unchanged by construction; the `.ts` files remain the sources of record, and the generated
+files carry a header saying they are generated. They are checked for freshness the same way the dashboard
+bundle is, so a vendored update cannot silently go stale.
 
-1. Ship the adapter as `.mjs` and import that, recording the upstream `.ts` and its revision in
-   `THIRD_PARTY.md` so the provenance stays explicit. Changes what a vendored file looks like.
-2. Generate the `.mjs` at pack time and keep importing the `.ts` in the repository. Means the published
-   bytes differ from the committed bytes, which the pack gate would have to be taught about.
-3. Load the adapter lazily behind a dynamic `import()` with a fallback. `core.mjs` is imported
-   synchronously everywhere, so this reaches further than it looks.
+The check now passes end to end, including installing the tarball into an empty prefix and running the
+installed CLI, and `no runtime .ts imports` guards every shipped module rather than the one file that
+broke.
 
-Until one of these lands, **the package must not be published** as a working release: `npm publish`
-would ship a tarball whose first command fails. The release check fails for this reason and that failure
-is correct.
+**Still open:** `test/package-install.test.mjs` has not been changed to perform a real installation, so
+the gap that hid this for so long is still there — it would not catch the next defect of this kind.
 
 ## Versioning policy
 

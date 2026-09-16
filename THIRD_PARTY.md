@@ -23,6 +23,14 @@ fit a byte budget, used by `bootstrap` to keep the injected startup summary insi
 `budgetBytes`. The vendored files (`session-start.ts`, `regex.ts`) are kept unmodified so they
 can be re-diffed against the pinned upstream commit.
 
+`session-start.mjs` and `regex.mjs` beside them are **generated, not vendored**: they are the same
+sources with the TypeScript types stripped by Node's own type stripper, produced by
+`scripts/build-vendor.mjs` and committed so the published package can be imported from anywhere —
+including `node_modules`, where Node refuses to strip types. Each carries a header saying it is
+generated, the test suite checks it is in step with its `.ts` source, and any change belongs in the
+`.ts` file rather than in the generated one. Nothing about the upstream licence or provenance changes:
+the `.ts` files remain the sources of record.
+
 This is a module-level pilot. It is **not** an upstream installation, and it is not a claim to
 qmd semantic search, to all upstream commands, or to all-platform hook support. No upstream
 runtime, service or CLI is required at any point.

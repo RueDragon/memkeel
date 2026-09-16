@@ -129,6 +129,8 @@ function main() {
   const packInfo = (() => { try { return JSON.parse(packed.stdout)[0]; } catch { return null; } })();
   if (!packInfo) {
     record('npm pack', false, (packed.stderr || packed.stdout).trim());
+    // The staging directory has to go on this path too, or a failed check leaves litter behind.
+    fs.rmSync(staging, { recursive: true, force: true });
     console.log(JSON.stringify({ ok: false, steps }, null, 2));
     process.exitCode = 1;
     return;
@@ -185,8 +187,6 @@ function main() {
       'npm publish — needs the maintainer’s credentials and a decision about package ownership.',
       'upgrading a live memory home — a separate, deliberate action; see RELEASE.md.',
     ],
-    // Stated as a fact about this build rather than left for the reader to infer from a failed step.
-    blocker: 'A shipped module imports vendor/obsidian-mind/session-start.ts, which Node refuses to type-strip under node_modules, so the installed package cannot run. See RELEASE.md.',
   }, null, 2));
   fs.rmSync(staging, { recursive: true, force: true });
   process.exitCode = ok ? 0 : 1;

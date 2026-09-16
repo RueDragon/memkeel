@@ -17,14 +17,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   policy, the platform matrix CI actually exercises, the breaking changes to state in release notes, and
   the upgrade and rollback procedure. It publishes nothing and never touches an existing installation —
   both are the maintainer's decisions, not a script's.
-- **The release check found a real blocker, and it is not fixed: the published package cannot run when
-  installed.** `lib/core.mjs` imports `vendor/obsidian-mind/session-start.ts` at runtime, and Node refuses
-  to strip TypeScript types under `node_modules`, so every command fails from an installed package while a
-  clone works. It survived because `test/package-install.test.mjs` unpacks the tarball into a temporary
-  directory and runs it from there — extraction, not installation, so the path is never under
-  `node_modules`. The failure, why it was invisible, and three candidate fixes are written up in
-  `RELEASE.md`; the check fails for this reason and that failure is correct. **`npm publish` must not ship
-  this as a working release until it is fixed.**
+- **Fixed: the published package could not run when installed.** `lib/core.mjs` imported
+  `vendor/obsidian-mind/session-start.ts` at runtime, and Node refuses to strip TypeScript types under
+  `node_modules`, so every command failed from an installed package while a clone worked. The `.mjs`
+  files are now generated from the pinned `.ts` sources by `scripts/build-vendor.mjs` — using Node's own
+  type stripper, the same mechanism that was already stripping the types in memory from a checkout — and
+  committed, so the published module behaves as the vendored source did and the `.ts` files remain the
+  sources of record. Their freshness is checked the way the dashboard bundle is, and the release check
+  now passes end to end, including installing the tarball into an empty prefix and running the installed
+  CLI. The failure was invisible because `test/package-install.test.mjs` unpacks the tarball and runs it
+  from there — extraction, not installation — and **that gap is still open**; see `RELEASE.md`.
 - **A collection policy that actually stops collection.** `collection` in `config.json` decides, once,
   whether a conversation may be collected, and the answer is consulted by every layer that writes
   conversation text: the hook queue, checkpoint draining (queue → evidence), the access log, and
