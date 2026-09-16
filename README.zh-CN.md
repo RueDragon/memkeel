@@ -324,6 +324,27 @@ MCP 暴露两个工具：
 | `config migrate [--dry-run]` | 只读。打印旧格式文档的升级计划：schema 号、折进 `roles` 的旧扁平角色键、从现有那一项推导出的存储根，以及缺失的默认值。不写入也不创建任何东西。 |
 | `config migrate --apply` | 写入该计划。计划为空时不做任何事；写入前先校验迁移后的文档；把原始字节复制到 `<memory home>/backups/config-migrations/`；回读不一致时自动回滚。重复执行是幂等的，`--dry-run --apply` 同时给出会以矛盾为由拒绝。 |
 
+### 备份与恢复
+
+| 命令 | 作用 |
+| --- | --- |
+| `backup create --out DIR` | 写出归档：事件账本、memory home 的配置、共享策略源，以及**无法重算**的状态 —— 安装记录、保留决策、待补证据的 capture、检查点队列。搜索索引与主题目录**不**携带（它们可由 `memkeel index` 与 `memkeel consolidate` 从账本重建），manifest 会把它们列为 `notCarried`，让"少带了什么"是可见的。快照在持有写入锁的情况下取得，因此不会有 capture 或 consolidate 落进副本中间。拒绝把目标放在 memory home 或存储内部，也拒绝非空目标。 |
+| `backup verify --dir DIR` | 重算每个校验和，并**分别**报告损坏、缺失与未列出的文件 —— 你真正想知道的其实是"归档里哪些部分还是好的"。归档不完整时以非零退出。 |
+| `restore --dir DIR --into DIR` | 只读计划：检查 manifest 里的绝对路径与 `..` 穿越、`home/` + `store/` 布局之外的表项、不支持的格式、已有数据的目标、以及可用空间。不写任何东西。 |
+| `restore --dir DIR --into DIR --execute` | 先校验归档，再恢复到**新**目录，并把恢复出来的 `config.json` 路径改指过去。这一步不是可选的：不改的话，恢复出来的 home 仍然指向它来源的那个存储 —— 看起来像"恢复成功"，行为上却像"恢复坏了"。 |
+
+```bash
+memkeel backup create --out ~/memkeel-backups/2026-09-16
+memkeel backup verify --dir ~/memkeel-backups/2026-09-16
+memkeel restore  --dir ~/memkeel-backups/2026-09-16 --into ~/restored     # 只出计划
+memkeel restore  --dir ~/memkeel-backups/2026-09-16 --into ~/restored --execute
+```
+
+**备份本身就是敏感数据。** 它含完整的事件账本，也可能含宿主配置的原始字节（那里面可能有凭据）—— 这正是安装记录必须随备份携带的原因。归档目录会以 `0700` 创建，但本程序对它的保护仅此而已：
+
+- **不内置加密，这是有意的决定。** 由本程序生成、并与归档放在一起的密钥保护不了任何东西；而要求用户自己保管密钥，会在最需要恢复的那一刻让恢复变成不可能。请依赖卷级全盘加密与目录权限；若确实需要加密归档，请交给自己的工具（`age`、`gpg`、`restic`）处理，并把口令当作真正的恢复责任。
+- **不支持覆盖现役存储进行恢复。** `--into` 只写新目录，非空目标一律拒绝。原地覆盖需要"恢复前快照"与显式确认步骤，这里有意不即兴实现。
+
 ### 读取
 
 | 命令 | 作用 |

@@ -9,6 +9,28 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`memkeel backup create` / `backup verify` / `restore`.** An archive of the journal, the memory
+  home's configuration, the shared policy source and the state that cannot be recomputed — the
+  installation receipt, retention decisions, pending captures and the checkpoint queue. The search
+  index and topic catalog are deliberately not carried and the manifest lists them as `notCarried`,
+  so what a restore will not bring back is stated rather than discovered. The snapshot is taken while
+  holding the writer lock, so no capture or consolidation can land inside the copy.
+  `backup verify` recomputes every checksum and reports corruption, missing files and unlisted files
+  separately, because "which parts are still good" is the question worth answering. `restore` plans
+  by default and writes only with `--execute`: it checks the manifest for absolute paths and `..`
+  traversal, for entries outside the `home/`+`store/` layout, for an unsupported format, for a
+  destination that already holds data, and for free space, then verifies the archive's checksums
+  before copying a single byte. A restore into a new directory repoints the restored `config.json` at
+  that directory — without it the restored home would still name the store it came from, which looks
+  like a successful restore and behaves like a broken one.
+- **The backup destination must live outside what is being backed up.** A destination inside the
+  memory home or the store would be read into its own next run, and a restore could overwrite the
+  only copy of the archive.
+- **Backups are documented as sensitive, with the encryption decision recorded.** No encryption is
+  built in: a key this program generated and stored beside the archive protects nothing, and a key
+  the user must keep would make a restore impossible at the moment it is needed most. Full-disk
+  encryption and directory permissions are the expectation, and an encrypted archive is the user's
+  own tool's job. The archive directory is created `0700`.
 - **All four hosts are covered by an isolated binding round-trip.** The host matrix had no coverage
   for Claude Code or dsh at all. A test now drives Codex, Claude Code, ZCode and dsh through the same
   cycle inside a throwaway tree — with every host directory, the user profile and the memory home

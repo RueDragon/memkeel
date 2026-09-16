@@ -340,6 +340,35 @@ Every command takes optional `--home <dir>` to point at a different memory home.
 | `config migrate [--dry-run]` | Read-only. Prints the upgrade plan for a document written by an older shape: the schema number, deprecated flat role keys folded into `roles`, a store root derived from the one that is present, and missing defaults. It writes nothing and creates nothing. |
 | `config migrate --apply` | Writes that plan. It is a no-op when the plan is empty, validates the migrated document before writing, copies the original bytes to `<memory home>/backups/config-migrations/`, and rolls back if the readback disagrees. Re-running it is idempotent, and `--dry-run --apply` together is refused as contradictory. |
 
+### Backup and restore
+
+| Command | What it does |
+| --- | --- |
+| `backup create --out DIR` | Write an archive of the journal, the memory home's configuration, the policy source, and the state that cannot be recomputed — the installation receipt, retention decisions, pending captures and the checkpoint queue. The search index and the topic catalog are **not** carried: they are rebuilt from the journal by `memkeel index` and `memkeel consolidate`, and the manifest lists them as `notCarried` so the omission is visible. Taken while holding the writer lock, so no capture or consolidation can land inside the copy. Refuses a destination inside the memory home or the store, and refuses a destination that is not empty. |
+| `backup verify --dir DIR` | Recompute every checksum and report corruption, missing files and unlisted files **separately** — "which parts of my archive are still good" is the question you actually have. Exits non-zero when the archive is not intact. |
+| `restore --dir DIR --into DIR` | Read-only plan. Checks the manifest for absolute paths and `..` traversal, for entries outside the `home/` + `store/` layout, for an unsupported format, for a destination that already holds data, and for free space. Writes nothing. |
+| `restore --dir DIR --into DIR --execute` | Verify the archive, then restore into a **new** directory and repoint the restored `config.json` at it. The rewrite is not optional: without it the restored home would still name the store it came from, which looks like a successful restore and behaves like a broken one. |
+
+```bash
+memkeel backup create --out ~/memkeel-backups/2026-09-16
+memkeel backup verify --dir ~/memkeel-backups/2026-09-16
+memkeel restore  --dir ~/memkeel-backups/2026-09-16 --into ~/restored     # plan only
+memkeel restore  --dir ~/memkeel-backups/2026-09-16 --into ~/restored --execute
+```
+
+**A backup is itself sensitive data.** It contains the whole journal and may contain the original
+bytes of host configuration, which can carry credentials — which is exactly why the receipt is
+carried at all. The archive directory is created `0700`, but that is all this program does about it:
+
+- **No encryption is built in, deliberately.** A key that this program generates and stores next to
+  the archive protects nothing, and a key the user must keep would make a restore impossible at the
+  moment it is needed most. Rely on full-disk encryption for the volume and on directory
+  permissions; if you need an encrypted archive, put it through your own tool (`age`, `gpg`,
+  `restic`) and treat the passphrase as the recovery responsibility it is.
+- **Restoring over a live store is not implemented.** `--into` writes to a new directory, and an
+  existing non-empty destination is refused. Overwriting in place needs a pre-restore snapshot and an
+  explicit confirmation step, and that is deliberately not improvised here.
+
 ### Reading
 
 | Command | What it does |

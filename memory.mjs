@@ -12,6 +12,7 @@ import { recallLearning, checkOperation, loadEvents } from './lib/core.mjs';
 import { applyRetention, loadRetention, retentionCandidates } from './lib/retention.mjs';
 import { CONFIG_SCHEMA_VERSION, applyConfigMigration, effectiveConfigView, loadConfig, planConfigMigration, resolveHome, validateConfig } from './lib/config.mjs';
 import { bindingDrift, launcherReport, readInstallReceipt } from './lib/install-receipt.mjs';
+import { createBackup, freeBytes, readManifest, restoreBackup, reviewRestore, verifyBackup } from './lib/backup.mjs';
 import { initStore } from './lib/init.mjs';
 import { planCodexBackfill, applyCodexBackfill } from './lib/ingest/backfill.mjs';
 import { startServer } from './dashboard.mjs';
@@ -19,9 +20,10 @@ import { startServer } from './dashboard.mjs';
 const argv = process.argv.slice(2);
 const first = argv.shift() ?? 'help';
 const command = ['--help', '-h'].includes(first) ? 'help' : first;
-// `config` takes a positional action (validate / show / migrate) before its flags, which the
-// generic flag loop below would otherwise reject as an unexpected argument.
-const subcommand = command === 'config' && argv.length && !argv[0].startsWith('--') ? argv.shift() : '';
+// `config` and `backup` take a positional action (validate / show / migrate, create / verify) before
+// their flags, which the generic flag loop below would otherwise reject as an unexpected argument.
+const SUBCOMMAND_HOSTS = new Set(['config', 'backup']);
+const subcommand = SUBCOMMAND_HOSTS.has(command) && argv.length && !argv[0].startsWith('--') ? argv.shift() : '';
 const options = {};
 while (argv.length) {
   const key = argv.shift();
@@ -37,7 +39,7 @@ if (command === 'help') {
   console.log(`Agent Memory ${VERSION}\nbootstrap --cwd PATH --query TEXT [--workspace ID] [--json] [--all] [--audit]\nrecall --query TEXT [--workspace ID|NAME|PATH] [--history]\nworkspace-add --cwd DIR  (register the project at DIR as a workspace so it can hold topics and events)\nregister --topic WORKSPACE/KEY --workspace ID --title TEXT [--alias TEXT]\nrecord --file EVENT.json | record --stdin\ncapture --file INPUT.json | capture --stdin  (input: {event, evidence_text})\nhabit-decide --file INPUT.json | habit-decide --stdin\nconsolidate  (pending means remaining; pendingBefore means starting backlog)
 retain --candidates [--since ISO] [--limit N]  (read-only: automatic checkpoints still undecided)
 retain --file DECISIONS.json | retain --stdin  ({decisions:[{event_id, decision: drop|keep, reason}]}; soft drop, consolidates)
-retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover captures, consume, refresh index and catalog)\nindex [--force]\ndashboard [--port N]  (start the read-only local management UI)\ningest-plan [--since ISO] [--limit N] [--root DIR] [--auto-register]  (read-only history backfill report)\ningest-apply [--since ISO] [--limit N] [--root DIR] [--auto-register]  (write backfilled turns as reported contexts)\ninit [--store DIR] [--obsidian-cli PATH] [--vault-name NAME]  (create an empty memory home and store; touches no agent)\nsetup [--hosts codex,claude,zcode,dsh] [--dry-run] [--check] [--uninstall] [--no-hooks]  (bind the memory system into installed agents)\nconfig validate|show|migrate [--dry-run|--apply] [--reveal-paths]  (read-only by default: validate the config, print the effective values and where each came from, or print the upgrade plan; migrate --apply writes it after a backup and a readback)\naudit\ndoctor\nbootstrap/recall are read-only; --audit explicitly persists bootstrap diagnostics.\nMCP: agent_memory_read for reads; agent_memory for authorized writes.\nNew notes and appends are written as bytes and read back for verification; the default backend needs no external service.\nPolicy config: ${configPath}`);
+retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover captures, consume, refresh index and catalog)\nindex [--force]\ndashboard [--port N]  (start the read-only local management UI)\ningest-plan [--since ISO] [--limit N] [--root DIR] [--auto-register]  (read-only history backfill report)\ningest-apply [--since ISO] [--limit N] [--root DIR] [--auto-register]  (write backfilled turns as reported contexts)\ninit [--store DIR] [--obsidian-cli PATH] [--vault-name NAME]  (create an empty memory home and store; touches no agent)\nsetup [--hosts codex,claude,zcode,dsh] [--dry-run] [--check] [--uninstall] [--no-hooks]  (bind the memory system into installed agents)\nconfig validate|show|migrate [--dry-run|--apply] [--reveal-paths]  (read-only by default: validate the config, print the effective values and where each came from, or print the upgrade plan; migrate --apply writes it after a backup and a readback)\nbackup create --out DIR | backup verify --dir DIR  (write a private archive of the journal and the non-rebuildable state, or verify one against its checksums)\nrestore --dir DIR --into DIR [--execute]  (read-only plan by default: check traversal, symlinks, conflicts, free space and format before anything is written; --execute restores into a new directory and repoints its config)\naudit\ndoctor\nbootstrap/recall are read-only; --audit explicitly persists bootstrap diagnostics.\nMCP: agent_memory_read for reads; agent_memory for authorized writes.\nNew notes and appends are written as bytes and read back for verification; the default backend needs no external service.\nPolicy config: ${configPath}`);
 } else if (command === 'init') {
   const store = options.store ?? path.join(policyRoot, 'store');
   console.log(JSON.stringify(initStore({ home: policyRoot, store: String(store), obsidianCli: options['obsidian-cli'] ?? '', vaultName: options['vault-name'] ?? '' }), null, 2));
@@ -100,6 +102,56 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
     const plan = planConfigMigration(raw);
     console.log(JSON.stringify({ ...base, fromSchema: plan.fromSchema, toSchema: plan.toSchema, changes: plan.changes,
       applied: false, dryRun: true, note: '只读计划：没有写入任何文件，也没有创建任何目录。' }, null, 2));
+  }
+} else if (command === 'backup' || command === 'restore') {
+  // These commands work on an archive, not on this machine's store, so they run before the "is there
+  // a memory home here" check: restoring onto a machine that has no home is the whole point.
+  try {
+    const action = command === 'restore' ? 'restore' : subcommand;
+    if (command === 'backup' && !['create', 'verify'].includes(action)) {
+      console.error('Usage: memkeel backup create --out DIR | memkeel backup verify --dir DIR');
+      process.exit(2);
+    }
+    if (action === 'create') {
+      const { config } = loadConfig(policyRoot);
+      const result = createBackup(config, { out: options.out, version: VERSION });
+      console.log(JSON.stringify({ dir: result.dir, files: result.files, bytes: result.bytes, notCarried: result.notCarried,
+        manifest: result.manifest.counts,
+        note: '备份也是敏感数据：它含事件账本，也可能含宿主配置的原始字节。请把它当成私密目录，并依赖系统磁盘加密与目录权限。' }, null, 2));
+    } else if (action === 'verify') {
+      if (!options.dir) { console.error('Usage: memkeel backup verify --dir DIR'); process.exit(2); }
+      const report = verifyBackup(String(options.dir));
+      console.log(JSON.stringify(report, null, 2));
+      if (!report.ok) process.exitCode = 1;
+    } else {
+      if (!options.dir) { console.error('Usage: memkeel restore --dir DIR --into DIR [--execute]'); process.exit(2); }
+      const manifest = readManifest(String(options.dir));
+      // The space check needs a destination to measure; without --into the plan is still reported.
+      const review = reviewRestore(manifest, { into: options.into, free: options.into ? freeBytes(String(options.into)) : null });
+      if (!options.execute) {
+        console.log(JSON.stringify({ ...review, dryRun: true, executed: false, files: manifest.files.length,
+          note: '只读计划：没有写入任何文件。加 --execute 执行。' }, null, 2));
+        if (!review.ok) process.exitCode = 1;
+      } else {
+        // Integrity first, then safety: an archive whose bytes do not match its own manifest must not
+        // be half-written into the destination and only then discovered to be broken.
+        const integrity = verifyBackup(String(options.dir));
+        if (!integrity.ok) {
+          console.error(`restore: 归档未通过校验，未写入任何内容：${integrity.problems.map((problem) => problem.message).join('；')}`);
+          process.exitCode = 1;
+        } else if (!review.ok) {
+          console.error(`restore: ${review.issues.map((issue) => issue.message).join('；')}`);
+          process.exitCode = 1;
+        } else {
+          const result = restoreBackup(String(options.dir), { into: options.into, manifest });
+          console.log(JSON.stringify({ ...result, verified: integrity.counts,
+            note: '已恢复到新目录，并把 config.json 的路径改指到新位置。索引与投影属于派生数据、未随备份携带：请在新库上运行 memkeel index 与 memkeel consolidate。' }, null, 2));
+        }
+      }
+    }
+  } catch (error) {
+    console.error(`${command}: ${error.message}`);
+    process.exitCode = 1;
   }
 } else if (!fs.existsSync(configPath)) {
   // Every other command needs an existing memory home. Reporting it here with one actionable
