@@ -18,8 +18,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { sha, atomicJson } from './lib/transport.mjs';
+import { RECEIPT_FORMAT, describeIntent, readInstallReceipt } from './lib/install-receipt.mjs';
 
 const source = path.dirname(fileURLToPath(import.meta.url));
+// The receipt records which release wrote it, so a later run can tell an upgrade from a re-run.
+const packageVersion = JSON.parse(fs.readFileSync(path.join(source, 'package.json'), 'utf8')).version;
 const home = os.homedir();
 const argv = process.argv.slice(2);
 const has = (name) => argv.includes(name);
@@ -47,29 +50,19 @@ const yaml = (text) => JSON.stringify(text);
 const report = [];
 const backupDir = path.join(memoryHome, 'backups', `setup-${Date.now()}`);
 let wrote = false;
-// A durable receipt records what this install did: per file, the first pre-install bytes and the
-// latest installed bytes, so a restore can tell "ours" from "changed since we wrote it".
-//
-// It is versioned and self-describing because the restore chain has to outlive an upgrade of the
-// program itself: a receipt written by an older build stays readable, and one written now records
-// which home and which hosts it belongs to.
-const RECEIPT_FORMAT = 1;
-const receiptFile = path.join(memoryHome, 'state', 'setup-receipt.json');
-let loadedReceipt = null;
-if (fs.existsSync(receiptFile)) {
-  const unusable = (why) => {
-    console.error(`setup: ${why} (${receiptFile})\nThe restore chain for files this install already changed lives in that record, so setup will not overwrite one it cannot read. Repair or remove it deliberately, then run setup again.`);
-    process.exit(1);
-  };
-  try { loadedReceipt = JSON.parse(fs.readFileSync(receiptFile, 'utf8')); }
-  catch (error) { unusable(`the installation receipt is not valid JSON: ${error.message}`); }
-  if (!loadedReceipt?.files || typeof loadedReceipt.files !== 'object' || Array.isArray(loadedReceipt.files)) {
-    unusable('the installation receipt is malformed: expected a "files" object');
-  }
+// The receipt, its format and its reader live in lib/install-receipt.mjs, because `doctor` reads
+// the same record and the two must agree about what it says.
+const previousReceipt = readInstallReceipt(memoryHome);
+const receiptFile = previousReceipt.file;
+if (previousReceipt.malformed) {
+  // The restore chain for files this install already changed lives in that record, so setup will
+  // not overwrite one it cannot read: the recorded `before` bytes are the only way back.
+  console.error(`setup: the installation receipt is unusable (${receiptFile}): ${previousReceipt.malformed}.\nRepair or remove it deliberately, then run setup again.`);
+  process.exit(1);
 }
 // A receipt written before the format field existed is read as-is and upgraded on the next write.
-const legacyReceipt = Boolean(loadedReceipt) && loadedReceipt.format === undefined;
-const receipt = loadedReceipt ?? { files: {} };
+const legacyReceipt = previousReceipt.legacy;
+const receipt = previousReceipt.exists ? { ...previousReceipt, files: { ...previousReceipt.files } } : { files: {} };
 
 function writeIfChanged(file, next, label) {
   const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
@@ -100,6 +93,7 @@ function writeIfChanged(file, next, label) {
   if (!uninstall) {
     const previous = receipt.files[file];
     receipt.format = RECEIPT_FORMAT;
+    receipt.version = packageVersion;
     receipt.memoryHome = memoryHome;
     receipt.scope = selected;
     receipt.at = new Date().toISOString();
@@ -370,19 +364,31 @@ if (!dryRun && !check && !uninstall) {
   });
 }
 
+const changedCount = report.filter((row) => row.changed).length;
 const summary = {
   mode: uninstall ? 'uninstall' : dryRun ? 'dry-run' : check ? 'check' : 'apply',
+  // Which of the five operations this actually is, named rather than left to be inferred from a
+  // changed-file count.
+  intent: describeIntent({
+    mode: uninstall ? 'uninstall' : dryRun ? 'dry-run' : check ? 'check' : 'apply',
+    receipt: previousReceipt,
+    changed: changedCount,
+    home: memoryHome,
+    version: packageVersion,
+    forced: force,
+  }),
   memoryHome,
   // The restore chain is reported, not just maintained: a legacy or malformed receipt is exactly
   // what makes a later uninstall fail closed, so the user should see it before that happens.
   receipt: {
     file: receiptFile,
-    exists: Boolean(loadedReceipt),
+    exists: previousReceipt.exists,
     format: receipt.format ?? null,
+    version: receipt.version ?? null,
     legacy: legacyReceipt,
     files: Object.keys(receipt.files).length,
   },
-  changed: report.filter((row) => row.changed).length,
+  changed: changedCount,
   skipped: report.filter((row) => row.skipped).length,
   report,
 };

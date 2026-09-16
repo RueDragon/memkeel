@@ -568,9 +568,13 @@ never as proof that a release contains no personal information.
 - **`setup` keeps a versioned installation receipt** at `<memory home>/state/setup-receipt.json`:
   per file, the bytes from before the install and the bytes it wrote. `setup --uninstall` restores
   from it and refuses any file that changed since, so treat it as private and do not edit it by
-  hand. An interrupted install is not fatal — re-running `setup` completes it. `memkeel doctor`
-  reports the receipt's format and file count, and which of `--home` / `MEMKEEL_HOME` / the
-  default actually chose the memory home.
+  hand. An interrupted install is not fatal — re-running `setup` completes it. Every run also names
+  what it did: `first-install`, `no-change`, `upgrade`, `rebind`, `refresh` or `uninstall`.
+- **`memkeel doctor` checks the install, not only the store.** It reports which of `--home` /
+  `MEMKEEL_HOME` / the default chose the memory home, the receipt's state, whether the recorded
+  bindings still point at that home, and whether the launcher and the scripts it invokes still
+  exist. Drift is the quiet one: if the store moves and the hosts are not rebound, agents simply
+  remember nothing.
 - Codex advisory injection is deferred for every model by default. Legacy model lists are
   ignored, including empty lists. Only `hook.codexDeferAdvisory: false` opts out.
 - Setup pins the absolute memory home in MCP and hook declarations. After upgrading an

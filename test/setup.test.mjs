@@ -258,7 +258,7 @@ test('a malformed receipt is refused instead of being silently overwritten', (t)
   fs.writeFileSync(receiptPath, broken);
   const result = run('setup', '--hosts', 'codex');
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /installation receipt is malformed/);
+  assert.match(result.stderr, /installation receipt is unusable/);
   // A clean refusal, not a stack trace a user cannot act on.
   assert.doesNotMatch(result.stderr, /\n\s+at /);
   assert.equal(fs.readFileSync(receiptPath, 'utf8'), broken, 'the unreadable record is preserved for inspection');
@@ -285,4 +285,61 @@ test('an unreadable receipt makes doctor unhealthy', (t) => {
   const doctor = run('doctor');
   assert.equal(doctor.status, 1);
   assert.match(JSON.parse(doctor.stdout).receipt.malformed, /JSON/);
+});
+
+test('doctor reports the recorded bindings and the launcher it depends on', (t) => {
+  const { host, home, run } = fixture(t);
+  fs.writeFileSync(path.join(host, 'config.toml'), 'model = "demo"\n');
+  assert.equal(run('setup', '--hosts', 'codex').status, 0);
+  const report = JSON.parse(run('doctor').stdout);
+  assert.equal(report.bindingDrift.status, 'ok');
+  assert.equal(report.bindingDrift.expected, home);
+  assert.equal(report.bindingDrift.bound, home);
+  assert.equal(report.launcher.ok, true);
+  // The launcher and the three scripts a binding invokes are all checked by name.
+  assert.deepEqual(report.launcher.checks.map((check) => check.label), ['launcher', 'mcp-server.mjs', 'hook-runner.mjs', 'dsh-memory-plugin.mjs']);
+});
+
+test('doctor reports drift when the receipt was bound to another memory home', (t) => {
+  const { host, home, root, run } = fixture(t);
+  fs.writeFileSync(path.join(host, 'config.toml'), 'model = "demo"\n');
+  assert.equal(run('setup', '--hosts', 'codex').status, 0);
+  const receiptPath = path.join(home, 'state', 'setup-receipt.json');
+  const receipt = receiptOf(home);
+  receipt.memoryHome = path.join(root, 'an-older-home');
+  fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2));
+
+  const report = JSON.parse(run('doctor').stdout);
+  assert.equal(report.bindingDrift.status, 'drift');
+  assert.equal(report.bindingDrift.bound, path.join(root, 'an-older-home'));
+  // Drift is reported, not fatal: the store itself is fine, it is the host bindings that are stale.
+  assert.equal(report.receipt.malformed, null);
+});
+
+test('setup names the operation it is performing', (t) => {
+  const { host, home, root, run } = fixture(t);
+  const config = path.join(host, 'config.toml');
+  fs.writeFileSync(config, 'model = "demo"\n');
+
+  assert.equal(JSON.parse(run('setup', '--hosts', 'codex').stdout).intent.kind, 'first-install');
+  assert.equal(JSON.parse(run('setup', '--hosts', 'codex').stdout).intent.kind, 'no-change');
+
+  // A receipt recording a different release is an upgrade, and one recording a different home is
+  // a rebind - both are named even when no file needs changing, because they change what the run
+  // means rather than only what it writes.
+  const receiptPath = path.join(home, 'state', 'setup-receipt.json');
+  const upgraded = receiptOf(home);
+  upgraded.version = '0.0.1';
+  fs.writeFileSync(receiptPath, JSON.stringify(upgraded, null, 2));
+  const upgrade = JSON.parse(run('setup', '--hosts', 'codex', '--check').stdout).intent;
+  assert.equal(upgrade.kind, 'upgrade');
+  assert.equal(upgrade.from, '0.0.1');
+
+  const moved = receiptOf(home);
+  moved.version = upgrade.to; // same release, so the moved home is the only condition
+  moved.memoryHome = path.join(root, 'elsewhere');
+  fs.writeFileSync(receiptPath, JSON.stringify(moved, null, 2));
+  assert.equal(JSON.parse(run('setup', '--hosts', 'codex', '--check').stdout).intent.kind, 'rebind');
+
+  assert.equal(JSON.parse(run('setup', '--hosts', 'codex', '--uninstall').stdout).intent.kind, 'uninstall');
 });

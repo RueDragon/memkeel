@@ -11,6 +11,7 @@ import { checkpointHealth } from './lib/checkpoint-audit.mjs';
 import { recallLearning, checkOperation, loadEvents } from './lib/core.mjs';
 import { applyRetention, loadRetention, retentionCandidates } from './lib/retention.mjs';
 import { CONFIG_SCHEMA_VERSION, applyConfigMigration, effectiveConfigView, loadConfig, planConfigMigration, resolveHome, validateConfig } from './lib/config.mjs';
+import { bindingDrift, launcherReport, readInstallReceipt } from './lib/install-receipt.mjs';
 import { initStore } from './lib/init.mjs';
 import { planCodexBackfill, applyCodexBackfill } from './lib/ingest/backfill.mjs';
 import { startServer } from './dashboard.mjs';
@@ -193,21 +194,23 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       // how a killed drain blocked every later checkpoint for seven hours unnoticed.
       const lock = inspectLock(path.join(policyRoot, 'state'));
       const checkpointLock = inspectLock(path.join(policyRoot, 'state/hook-queue'));
-      // The restore chain and the home that was actually chosen, reported together: a legacy or
-      // malformed receipt is what makes a later `setup --uninstall` fail closed, and an
-      // unexpected home is the usual reason a command "loses" a store.
-      const receiptPath = path.join(policyRoot, 'state', 'setup-receipt.json');
-      let receipt = { exists: false };
-      if (fs.existsSync(receiptPath)) {
-        try {
-          const raw = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-          receipt = { exists: true, format: raw.format ?? null, legacy: raw.format === undefined, files: Object.keys(raw.files ?? {}).length, at: raw.at ?? null, memoryHome: raw.memoryHome ?? null };
-        } catch (error) { receipt = { exists: true, malformed: error.message }; }
-      }
-      const check = { version: VERSION, effectiveHome: { path: policyRoot, source: homeSource }, missing, captures, checkpoints: checkpointHealth(config, loadEvents(config)), lock, checkpointLock, receipt,
+      // The restore chain, the home that was actually chosen, whether the recorded bindings still
+      // point at that home, and whether the scripts they invoke still exist. A legacy or malformed
+      // receipt is what makes a later `setup --uninstall` fail closed; an unexpected home is the
+      // usual reason a command "loses" a store; a moved checkout leaves every host pointing at
+      // files that are gone, which looks like a broken memory rather than a moved install.
+      const install = readInstallReceipt(policyRoot);
+      const drift = bindingDrift(install, policyRoot);
+      const launcher = launcherReport({ command: process.execPath, files: ['mcp-server.mjs', 'hook-runner.mjs', 'dsh-memory-plugin.mjs'].map((name) => path.join(sourceRoot, name)) });
+      const receipt = { exists: install.exists, malformed: install.malformed, format: install.format, version: install.version, legacy: install.legacy, at: install.at, memoryHome: install.memoryHome, files: Object.keys(install.files).length };
+      const check = { version: VERSION, effectiveHome: { path: policyRoot, source: homeSource }, missing, captures, checkpoints: checkpointHealth(config, loadEvents(config)), lock, checkpointLock,
+        receipt, bindingDrift: drift, launcher,
         routes: loadRoutes(config).map((row) => row.id), engine: 'obsidian-mind/af615d1 applyInjectionBudget (read-only adapter)', hostIntegration: 'File verification is not a host new-session smoke test.' };
       console.log(JSON.stringify(check, null, 2));
-      if (missing.length || lock.stale || checkpointLock.stale || check.captures.pending.length || !check.checkpoints.healthy || receipt.malformed) process.exitCode = 1;
+      // `unknown` drift is not unhealthy: a legacy receipt simply cannot answer the question, and
+      // saying "ok" would be a guess while failing the run would be noise. Actual drift is not
+      // healthy either, but it is not fatal to the store - it is reported for the user to fix.
+      if (missing.length || lock.stale || checkpointLock.stale || check.captures.pending.length || !check.checkpoints.healthy || receipt.malformed || !launcher.ok) process.exitCode = 1;
     } else throw new Error(`Unknown command: ${command}`);
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

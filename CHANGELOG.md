@@ -32,10 +32,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   restore chain survives an upgrade of the program. A receipt written by an older build stays
   readable and is upgraded on the next write; `setup` reports the receipt state in its summary.
   An unreadable receipt is refused with one actionable line instead of being overwritten.
-- **`memkeel doctor` reports the effective home and the restore record.** It prints which of
-  `--home` / `MEMKEEL_HOME` / the default chose the home, and the receipt's format, age and file
-  count. An unreadable receipt marks the store unhealthy, because that is exactly what makes a
-  later `setup --uninstall` fail closed.
+- **`setup` names the operation it is performing.** Every run reports one of `first-install`,
+  `no-change`, `upgrade`, `rebind`, `refresh` or `uninstall`, with a sentence saying why, instead of
+  leaving the user to infer it from a changed-file count. More than one can hold at once — upgrading
+  the program *and* repointing it at a different home is a realistic move — so the remaining
+  matches are carried in `also` rather than dropped by the priority order.
+- **`memkeel doctor` reports the effective home, the restore record, binding drift and the
+  launcher.** It prints which of `--home` / `MEMKEEL_HOME` / the default chose the home, the
+  receipt's format, release, age and file count, whether the recorded bindings still point at that
+  home, and whether the launcher and the three scripts a binding invokes still exist. An unreadable
+  receipt or a missing launcher marks the store unhealthy, because that is what makes a later
+  `setup --uninstall` fail closed or every host fail to start. A legacy receipt that recorded no
+  home reports `unknown` drift rather than claiming agreement, and real drift is reported without
+  failing the store, because the store itself is fine — the host bindings are stale.
 - **`npm run pack-scan`: a packaged-artifact gate.** A clean working tree says nothing about
   what `npm pack` ships, so this gate packs, unpacks the real tarball in a temporary directory,
   checks that every shipped file is declared in `package.json` `files`, and scans the unpacked

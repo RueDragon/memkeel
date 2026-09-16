@@ -1,0 +1,203 @@
+// Coverage for the installation receipt (DEP-02).
+//
+// The receipt is the only record of what `memkeel setup` changed in another application's
+// configuration, so two commands read it and must agree: `setup` restores from it and `doctor`
+// reports on it. These tests pin what a receipt means, what happens when it cannot be trusted, and
+// the two conditions that are otherwise silent - a binding that points at a memory home no longer
+// in use, and a launcher or script that has since moved away.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { RECEIPT_FORMAT, bindingDrift, describeIntent, launcherReport, readInstallReceipt, receiptPath } from '../lib/install-receipt.mjs';
+
+function fixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-receipt-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, 'home');
+  fs.mkdirSync(path.join(home, 'state'), { recursive: true });
+  const write = (value) => {
+    const file = receiptPath(home);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+    return file;
+  };
+  const receipt = (extra = {}) => ({
+    format: RECEIPT_FORMAT,
+    version: '1.0.0',
+    memoryHome: home,
+    scope: ['codex'],
+    at: '2026-09-16T00:00:00.000Z',
+    files: { [path.join(root, 'config.toml')]: { label: 'codex-mcp', before: 'model = "x"\n', after: 'model = "x"\nbound\n' } },
+    ...extra,
+  });
+  return { root, home, write, receipt };
+}
+
+// ------------------------------------------------------------------ reading
+
+test('no receipt is reported as absent, not as an error', (t) => {
+  const { home } = fixture(t);
+  const receipt = readInstallReceipt(home);
+  assert.equal(receipt.exists, false);
+  assert.equal(receipt.malformed, null);
+  assert.deepEqual(receipt.files, {});
+  assert.equal(receipt.file, receiptPath(home));
+});
+
+test('an unparseable or wrongly shaped receipt is reported instead of thrown', (t) => {
+  for (const [label, body, expected] of [
+    ['invalid JSON', '{ not json', /not valid JSON/],
+    ['a JSON array', '[]', /not a JSON object/],
+    ['a missing files object', JSON.stringify({ format: 1 }), /expected a "files" object/],
+    ['a files array', JSON.stringify({ files: [] }), /expected a "files" object/],
+  ]) {
+    const { home, write } = fixture(t);
+    write(body);
+    const receipt = readInstallReceipt(home);
+    assert.equal(receipt.exists, true, label);
+    assert.match(receipt.malformed, expected, label);
+    // A record that cannot be trusted must not be presented as usable rows.
+    assert.deepEqual(receipt.files, {}, label);
+  }
+});
+
+test('a receipt from before the format field is readable and marked legacy', (t) => {
+  const { home, write, receipt } = fixture(t);
+  const legacy = receipt();
+  delete legacy.format; delete legacy.version; delete legacy.memoryHome;
+  write(legacy);
+  const parsed = readInstallReceipt(home);
+  assert.equal(parsed.malformed, null);
+  assert.equal(parsed.legacy, true);
+  assert.equal(parsed.format, null);
+  assert.equal(parsed.memoryHome, null);
+  assert.equal(Object.keys(parsed.files).length, 1, 'the recorded bytes are what restore, so they must survive');
+});
+
+test('rows that cannot restore anything are dropped', (t) => {
+  const { home, write, receipt } = fixture(t);
+  const raw = receipt();
+  raw.files['no-after'] = { label: 'x', before: 'a' };
+  raw.files['after-not-a-string'] = { label: 'x', before: 'a', after: 42 };
+  raw.files['not-an-object'] = 'nonsense';
+  write(raw);
+  const parsed = readInstallReceipt(home);
+  // Keeping an unusable row would make an uninstall believe it owns a file it has no original for.
+  assert.deepEqual(Object.keys(parsed.files), Object.keys(receipt().files));
+});
+
+test('a round trip preserves the recorded bytes exactly', (t) => {
+  const { home, write, receipt } = fixture(t);
+  write(receipt());
+  const parsed = readInstallReceipt(home);
+  const [file] = Object.keys(receipt().files);
+  assert.equal(parsed.files[file].before, 'model = "x"\n');
+  assert.equal(parsed.files[file].after, 'model = "x"\nbound\n');
+  assert.equal(parsed.files[file].label, 'codex-mcp');
+  assert.equal(parsed.memoryHome, home);
+  assert.deepEqual(parsed.scope, ['codex']);
+});
+
+// ------------------------------------------------------------------ drift
+
+test('drift compares the recorded home exactly, with no parsing of host files', (t) => {
+  const { home, root, write, receipt } = fixture(t);
+  write(receipt());
+  const parsed = readInstallReceipt(home);
+  assert.equal(bindingDrift(parsed, home).status, 'ok');
+  // A different home is drift, and path spellings that resolve to the same place are not.
+  assert.equal(bindingDrift(parsed, path.join(root, 'elsewhere')).status, 'drift');
+  assert.equal(bindingDrift(parsed, path.join(home, '..', path.basename(home))).status, 'ok');
+});
+
+test('a legacy receipt reports unknown drift rather than a guess', (t) => {
+  const { home, write, receipt } = fixture(t);
+  const legacy = receipt();
+  delete legacy.memoryHome;
+  write(legacy);
+  const drift = bindingDrift(readInstallReceipt(home), home);
+  // Claiming agreement would be inventing a fact; claiming drift would be a false alarm.
+  assert.equal(drift.status, 'unknown');
+  assert.match(drift.reason, /没有记录/);
+});
+
+test('no receipt and an unusable receipt are distinct states', (t) => {
+  const { home, write } = fixture(t);
+  assert.equal(bindingDrift(readInstallReceipt(home), home).status, 'no-receipt');
+  write('{ broken');
+  assert.equal(bindingDrift(readInstallReceipt(home), home).status, 'unknown');
+});
+
+// ------------------------------------------------------------------ launcher
+
+test('the launcher report says whether every bound path still exists', (t) => {
+  const { root } = fixture(t);
+  const present = path.join(root, 'present.mjs');
+  fs.writeFileSync(present, '// noop\n');
+  const missing = path.join(root, 'gone.mjs');
+
+  const ok = launcherReport({ command: process.execPath, files: [present] });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.checks.length, 2);
+
+  const broken = launcherReport({ command: process.execPath, files: [present, missing] });
+  assert.equal(broken.ok, false);
+  assert.equal(broken.checks.find((check) => check.path === missing).exists, false);
+  assert.equal(broken.checks.find((check) => check.path === present).exists, true);
+});
+
+// ------------------------------------------------------------------ intent
+
+const INTENT_BASE = { mode: 'apply', changed: 3, home: '/memory/home', version: '1.0.0' };
+const liveReceipt = (extra = {}) => ({ exists: true, malformed: null, version: '1.0.0', memoryHome: '/memory/home', files: { '/host/config': { label: 'codex-mcp', before: 'a', after: 'b' } }, ...extra });
+
+test('each operation names itself', () => {
+  assert.equal(describeIntent({ ...INTENT_BASE, mode: 'uninstall', receipt: liveReceipt() }).kind, 'uninstall');
+  assert.equal(describeIntent({ ...INTENT_BASE, receipt: { exists: false, files: {} } }).kind, 'first-install');
+  assert.equal(describeIntent({ ...INTENT_BASE, receipt: liveReceipt({ files: {} }) }).kind, 'first-install');
+  assert.equal(describeIntent({ ...INTENT_BASE, changed: 0, receipt: liveReceipt() }).kind, 'no-change');
+  assert.equal(describeIntent({ ...INTENT_BASE, receipt: liveReceipt() }).kind, 'refresh');
+  assert.equal(describeIntent({ ...INTENT_BASE, forced: true, receipt: liveReceipt() }).kind, 'rebind');
+});
+
+test('an upgrade is detected from the release recorded in the receipt', () => {
+  const intent = describeIntent({ ...INTENT_BASE, version: '1.1.0', receipt: liveReceipt({ version: '1.0.0' }) });
+  assert.equal(intent.kind, 'upgrade');
+  assert.equal(intent.from, '1.0.0');
+  assert.equal(intent.to, '1.1.0');
+  // A receipt that records no version cannot establish an upgrade, so it is not claimed.
+  assert.notEqual(describeIntent({ ...INTENT_BASE, version: '1.1.0', receipt: liveReceipt({ version: null }) }).kind, 'upgrade');
+});
+
+test('a moved memory home is a rebind, and it is named before an upgrade-free refresh', () => {
+  const intent = describeIntent({ ...INTENT_BASE, home: '/other/home', receipt: liveReceipt() });
+  assert.equal(intent.kind, 'rebind');
+  assert.equal(intent.from, '/memory/home');
+  assert.equal(intent.to, path.resolve('/other/home'));
+});
+
+test('an upgrade and a moved home are both reported, not collapsed into one', () => {
+  // Upgrading the program and repointing it in the same run is a realistic move, and reporting
+  // only the higher-priority condition would hide the other one.
+  const intent = describeIntent({ ...INTENT_BASE, home: '/other/home', version: '2.0.0', receipt: liveReceipt({ version: '1.0.0' }) });
+  assert.equal(intent.kind, 'upgrade');
+  assert.deepEqual(intent.also.map((entry) => entry.kind), ['rebind']);
+  assert.equal(intent.also[0].to, path.resolve('/other/home'));
+});
+
+test('every intent explains itself', () => {
+  for (const args of [
+    { ...INTENT_BASE, mode: 'uninstall', receipt: liveReceipt() },
+    { ...INTENT_BASE, receipt: { exists: false, files: {} } },
+    { ...INTENT_BASE, receipt: liveReceipt() },
+    { ...INTENT_BASE, changed: 0, receipt: liveReceipt() },
+    { ...INTENT_BASE, version: '2.0.0', receipt: liveReceipt() },
+  ]) {
+    const intent = describeIntent(args);
+    assert.equal(typeof intent.kind, 'string');
+    assert.ok(intent.reason.length > 8, `no reason for ${intent.kind}`);
+    assert.ok(Array.isArray(intent.also), `no also list for ${intent.kind}`);
+  }
+});
