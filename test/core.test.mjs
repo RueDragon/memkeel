@@ -339,6 +339,51 @@ test('a cached index refresh does not rewrite the index, and any real change sti
   assert.equal(fs.readFileSync(file, 'utf8'), '{"entries":{}}', 'persist: false must never write');
 });
 
+test('two stores in one process do not share a cached index', (t) => {
+  const a = fixture(t);
+  const b = fixture(t);
+  assert.notEqual(a.config.policyRoot, b.config.policyRoot);
+  // A distinguishable note in each store: if the cache leaked across stores, the other one's entry
+  // would appear here.
+  fs.writeFileSync(inside(a.config.vaultRoot, 'work/inbox/only-a.md'), '# Only A\n\n2026-09-02\n');
+  fs.writeFileSync(inside(b.config.vaultRoot, 'work/inbox/only-b.md'), '# Only B\n\n2026-09-02\n');
+
+  const firstA = refreshIndex(a.config);
+  const firstB = refreshIndex(b.config);
+  const secondA = refreshIndex(a.config);
+
+  assert.ok(firstA.entries['work/inbox/only-a.md']);
+  assert.equal(firstA.entries['work/inbox/only-b.md'], undefined, 'store A must not see store B');
+  assert.ok(firstB.entries['work/inbox/only-b.md']);
+  assert.equal(firstB.entries['work/inbox/only-a.md'], undefined, 'store B must not see store A');
+  // Alternating between two stores must still resolve each one's own index.
+  assert.ok(secondA.entries['work/inbox/only-a.md']);
+  assert.equal(secondA.entries['work/inbox/only-b.md'], undefined);
+});
+
+test('a legacy or corrupt index file is rebuilt rather than trusted', (t) => {
+  const { config } = fixture(t);
+  const file = inside(config.policyRoot, 'state/index.json');
+  refreshIndex(config);
+
+  // A file that is not the current schema must be rebuilt and rewritten. Serving a warm cache instead
+  // would leave the store on an index shape this version no longer produces.
+  const legacy = JSON.parse(fs.readFileSync(file, 'utf8'));
+  legacy.schemaVersion = 1;
+  fs.writeFileSync(file, JSON.stringify(legacy));
+  const before = fs.readFileSync(file, 'utf8');
+  refreshIndex(config);
+  const after = fs.readFileSync(file, 'utf8');
+  assert.notEqual(after, before, 'a non-schema-3 index must be rewritten');
+  assert.equal(JSON.parse(after).schemaVersion, 3);
+
+  // A corrupt file must be rebuilt from the notes, not masked by whatever was cached.
+  fs.writeFileSync(file, '{ this is not json');
+  const recovered = refreshIndex(config);
+  assert.ok(recovered.entries['work/inbox/evidence.md'], 'a corrupt index must be rebuilt from the notes');
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).schemaVersion, 3);
+});
+
 test('conflicting title and workspace metadata stays in evidence but not routine context', (t) => {
   const { config } = fixture(t);
   const file = inside(config.vaultRoot, 'work/inbox/evidence.md');

@@ -145,20 +145,44 @@ That is 2.1× at both scales, which is the shape a fixed per-call cost should ha
 paths at all. Those are run-to-run variance on a shared machine, and reading them as an improvement
 would be exactly the "felt" claim this file exists to avoid.
 
-**What is left in that 60.9 ms:** `JSON.parse` of the index file on every call — the file is ~15 MiB
-at 10k events, and the entries are needed by the caller. Removing it means caching the parsed index
-in memory and returning a shared object, which is a different risk class: a caller that mutates an
-entry would then corrupt the cache for every later call. That needs its own investigation, not a
-one-line change.
-
 The regression test pins the semantics rather than the timing: it asserts the index file is not
 touched when nothing changed, that a note change is still written and reported, that a stale route
 table is still rewritten, and that `force` and `persist: false` keep their documented meanings. It
 fails against the previous always-write behaviour.
 
+## Optimisation 2: the index is not re-parsed on every call
+
+Optimisation 1 left `JSON.parse` of the index as the dominant cost of a cached refresh — a ~15 MiB
+document at 10k events, whose entries are what the caller asked for. The parsed index is now kept in
+memory, keyed on the file's own path, `mtime` and size, so an index written by another process or
+restored from a backup is read rather than served stale; what this function writes is remembered under
+the new key instead of being re-parsed on the next call.
+
+This one has a risk that the previous one did not, so it was only taken once the prerequisite was
+checked: the `entries` handed out are now the *same* objects across calls. Every caller today treats
+them as read-only — `Object.values`, filters and property reads in `dashboard.mjs`, `memory.mjs`,
+`lib/catalog.mjs`, `lib/core.mjs` and `lib/lifecycle.mjs` — and the function says so in a comment, since
+a later caller that mutated an entry would corrupt the cache for every call after it.
+
+| scale | original | after opt 1 | after opt 2 | total |
+| --- | --- | --- | --- | --- |
+| 1k events | 15.77 ms | 7.56 ms | **2.90 ms** | **5.4×** |
+| 10k events | 129.01 ms | 60.91 ms | **12.00 ms** | **10.8×** |
+
+The gain grows with the store, which is what the diagnosis predicted: the cost removed was proportional
+to the size of the index.
+
+**Again, only that row is the result.** `consolidate` (33.4 s), `record` (7.6 s) and the cold replay
+(8.4 s) are unchanged by this work and remain the real problem; their movement between runs is noise.
+
+**What is left in the remaining 12.0 ms:** walking the vault, one `statSync` per file, `loadRoutes`, and
+rebuilding the `entries` object each call. That is proportional to the number of files rather than to
+their size, so it is a different and much smaller problem — and unlike the write path, it is no longer
+the thing standing between a user and a usable store.
+
 ## What has not been done
 
-**One optimisation has been made (above), and the rest have not.** The plan requires that performance
+**Two optimisations have been made (above), and the rest have not.** The plan requires that performance
 work not change retrieval or reduction semantics, so each step is taken on its own with the full suite
 behind it rather than several at once.
 
@@ -172,8 +196,8 @@ tests; shipping it without them would be exactly the "felt improvement" this fil
 The order to try next, cheapest and safest first:
 
 1. ~~Make the cached `refreshIndex` a real no-op.~~ Done — 2.1× at both scales.
-2. Remove the remaining per-call `JSON.parse` of the index by caching the parsed object in memory.
-   Requires establishing that no caller mutates an entry it was handed.
+2. ~~Stop re-parsing the index on every call.~~ Done — a further 2.6× at 1k and 5.1× at 10k, once the
+   mutation audit showed every caller treats `entries` as read-only.
 3. Per-file parse caching for the journal, with the validation semantics preserved: cache the parsed
    JSON, re-run `validateEvent` each call, and extend the fingerprint to cover the configuration keys
    validation reads. Verify with the full suite plus the correctness block in `test/perf.test.mjs`.

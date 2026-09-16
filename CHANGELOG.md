@@ -218,6 +218,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   regression test pins the semantics (no write when nothing changed; a note change, a stale route table,
   `force` and `persist: false` all still behave as documented) rather than the timing, and it fails
   against the previous always-write behaviour. See `PERFORMANCE.md` for the method and the numbers.
+- **The index is no longer re-parsed on every call.** The parsed index is kept in memory, keyed on the
+  file's own path, `mtime` and size, so a file written by another process or restored from a backup is
+  read rather than served stale. A cached refresh goes from 2.90 ms at 1k events to 12.00 ms at 10k
+  (5.4× and 10.8× against where this started). This one carries a risk the previous change did not:
+  the `entries` handed out are now the same objects across calls, so callers must treat them as
+  read-only. That was checked before the change — `dashboard.mjs`, `memory.mjs`, `lib/catalog.mjs`,
+  `lib/core.mjs` and `lib/lifecycle.mjs` all use `Object.values`, filters and property reads — and the
+  function now says so, because a later caller that mutated an entry would corrupt every call after it.
+  Tests cover the two ways this could go wrong: two stores in one process must not share an index, and a
+  legacy or corrupt `index.json` must be rebuilt rather than masked by a warm cache.
 - **Restore stays whole-file, and that is a decision rather than an omission.** Restoring only the
   fields we recognise would need a real parser per host format — TOML for Codex, JSON for Claude and
   ZCode, YAML for dsh — and this program ships with zero runtime dependencies by design. The
