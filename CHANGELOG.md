@@ -25,8 +25,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   committed, so the published module behaves as the vendored source did and the `.ts` files remain the
   sources of record. Their freshness is checked the way the dashboard bundle is, and the release check
   now passes end to end, including installing the tarball into an empty prefix and running the installed
-  CLI. The failure was invisible because `test/package-install.test.mjs` unpacks the tarball and runs it
-  from there — extraction, not installation — and **that gap is still open**; see `RELEASE.md`.
+  CLI. The failure was invisible because `test/package-install.test.mjs` unpacked the tarball and ran it
+  from there — extraction, not installation — and **that gap is closed**: the test now performs a real
+  `npm install` into an empty prefix, asserts the package landed under `node_modules` before doing
+  anything else, and was verified to fail with the original error when the `.ts` import is put back.
 - **A collection policy that actually stops collection.** `collection` in `config.json` decides, once,
   whether a conversation may be collected, and the answer is consulted by every layer that writes
   conversation text: the hook queue, checkpoint draining (queue → evidence), the access log, and

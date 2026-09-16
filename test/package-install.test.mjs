@@ -1,12 +1,18 @@
 // The published artifact has to be self-sufficient.
 //
 // `npm pack` had only ever been dry-run, so nobody had checked that what a user actually installs
-// can run. This unpacks the real tarball into a directory that holds nothing else and exercises the
-// commands the documentation promises, against a home and store outside the checkout. Nothing here
-// may reach back into the repository: if it did, the test would pass while a real install failed.
+// can run. This installs the real tarball into an empty prefix and exercises the commands the
+// documentation promises, against a home and store outside the checkout. Nothing here may reach back
+// into the repository: if it did, the test would pass while a real install failed.
+//
+// It installs rather than unpacks, and that distinction is load-bearing. An earlier version extracted
+// the tarball into a plain directory, which meant the package never lived under `node_modules` — and a
+// package that imports a `.ts` file works from a plain directory and fails under `node_modules`, where
+// Node refuses to strip TypeScript types. That defect shipped all the way to a release check before
+// anyone saw it, because unpacking is not installing.
 //
 // It also stands in for the parts of the container check that cannot run without a container
-// runtime. The image copies a subset of this tree, so proving the unpacked tree is enough to serve
+// runtime. The image copies a subset of this tree, so proving the installed tree is enough to serve
 // the console proves the image does not need the Vite app source either.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,26 +24,31 @@ import { fileURLToPath } from 'node:url';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 
-/** Pack, unpack, and return a CLI that only knows about the unpacked copy. */
+/** Install the real tarball into an empty prefix, and return a CLI that only knows about that copy. */
 function installed(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-install-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  // npm is `npm.cmd` on Windows, and a batch file cannot be executed without a shell.
+  const isWindows = process.platform === 'win32';
 
-  const packed = spawnSync('npm', ['pack', '--pack-destination', root, '--json'], { cwd: repo, encoding: 'utf8', windowsHide: true, shell: process.platform === 'win32' });
+  const packed = spawnSync('npm', ['pack', '--pack-destination', root, '--json'], { cwd: repo, encoding: 'utf8', windowsHide: true, shell: isWindows });
   assert.equal(packed.status, 0, packed.stderr);
   const tarball = path.join(root, JSON.parse(packed.stdout)[0].filename);
-  const into = path.join(root, 'installed');
-  fs.mkdirSync(into, { recursive: true });
-  const untar = spawnSync('tar', ['-xzf', tarball, '-C', into], { encoding: 'utf8', windowsHide: true });
-  assert.equal(untar.status, 0, untar.stderr);
 
-  const pkg = path.join(into, 'package');
+  const prefix = path.join(root, 'prefix');
+  fs.mkdirSync(prefix, { recursive: true });
+  const install = spawnSync('npm', ['install', '--prefix', prefix, '--no-audit', '--no-fund', '--loglevel', 'error', tarball], { cwd: repo, encoding: 'utf8', windowsHide: true, shell: isWindows });
+  assert.equal(install.status, 0, install.stderr);
+
+  const pkg = path.join(prefix, 'node_modules', 'memkeel');
+  assert.equal(fs.existsSync(path.join(pkg, 'package.json')), true, 'the package must land under node_modules, or this test is not testing an installation');
+
   const home = path.join(root, 'home');
   const store = path.join(root, 'store');
   const cli = (...args) => spawnSync(process.execPath, [path.join(pkg, 'memory.mjs'), ...args], {
     cwd: root, encoding: 'utf8', windowsHide: true, env: { ...process.env, MEMKEEL_HOME: home },
   });
-  return { root, pkg, home, store, cli, tarball };
+  return { root, pkg, home, store, cli, tarball, prefix };
 }
 
 test('the published tree is the runtime set, not the checkout', (t) => {

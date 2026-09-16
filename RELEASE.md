@@ -45,8 +45,13 @@ The check now passes end to end, including installing the tarball into an empty 
 installed CLI, and `no runtime .ts imports` guards every shipped module rather than the one file that
 broke.
 
-**Still open:** `test/package-install.test.mjs` has not been changed to perform a real installation, so
-the gap that hid this for so long is still there — it would not catch the next defect of this kind.
+**The gap that hid it is now closed.** `test/package-install.test.mjs` used to unpack the tarball and run
+the CLI from the unpacked directory, which is not an installation. It now runs `npm install` into an empty
+prefix and asserts the package landed under `node_modules` before doing anything else — so the ordering
+that made this failure possible is the first thing the test establishes. Verified by putting the `.ts`
+import back: the test fails with the same `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`, pointing at
+`prefix/node_modules/memkeel/vendor/obsidian-mind/session-start.ts`. The test that used to hide the defect
+now catches it.
 
 ## Versioning policy
 
