@@ -417,6 +417,7 @@ conversation text, not by the pages that display it:
 | `privacy show [--host H] [--workspace W] [--cwd DIR]` | Read-only. Prints the effective policy, the vocabulary below, and **which scope decided** — a switch that cannot explain itself is indistinguishable from a bug. |
 | `privacy exclusions --preview FILE` | Read-only. Evaluates each exclusion rule against sample values from a JSON file and names the rules nothing matched. |
 | `privacy cleanup [--host H] [--workspace W] [--cwd DIR]` | Read-only preview of what a retention cleanup would touch, and an explicit list of what it would not. Deletes nothing. |
+| `privacy export --out FILE` | Writes **one** redacted file, safe to hand to someone else: versions, counts, the configuration with credentials dropped and paths reduced, and the effective collection policy. No session text, no evidence, no full paths, no credentials. It audits its own payload against the real string values before writing and refuses to write if that check fails; it also refuses to overwrite an existing file. |
 
 ```json
 {

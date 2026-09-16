@@ -32,6 +32,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   *which scope decided it* — an off switch with no explanation is indistinguishable from a bug.
   `cleanup` previews what a retention cleanup would touch and lists what it would not (the ledger, the
   backups, the host's own transcripts). Nothing is deleted.
+- **`memkeel privacy export --out FILE`, a redacted diagnostic export.** One file, safe to hand to
+  someone else: versions and platform, counts of events / facts / contexts / actions / evidence
+  citations and of the checkpoint queue by status, the configuration with credentials dropped and
+  every path reduced, and the effective collection policy. What it withholds is stated *in the
+  payload* so a reader can tell an omission from an accident: no session text, no note bodies or
+  evidence, no full paths, no `dashboardTokenSecret` or Obsidian CLI path. The memory home and the
+  store become fixed placeholders rather than basenames, because a basename can still identify a
+  project.
+- **The export audits itself before it is written, and refuses to write if the check fails.** The
+  audit collects the payload's real string values instead of searching its serialized text: on Windows
+  `JSON.stringify` doubles every backslash, so a plain `text.includes(home)` compares the single- and
+  double-escaped spellings of the same path and never matches — an audit blind to the platform it runs
+  on is worse than no audit, because it reports `clean`. The test asserts a planted leak is caught and
+  that the audit does not echo the value it found. Writing also refuses to overwrite an existing file,
+  since the export is cheap to regenerate and may already have been sent to someone.
 - **Turning collection off covers what is already queued.** A checkpoint written before the switch
   was turned off does not become evidence afterwards: the drain marks it `held` and defers it rather
   than promoting it or discarding it, so turning collection back on drains it normally. `held` is a

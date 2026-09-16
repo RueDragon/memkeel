@@ -15,6 +15,7 @@ import { bindingDrift, launcherReport, readInstallReceipt } from './lib/install-
 import { createBackup, freeBytes, readManifest, restoreBackup, reviewRestore, verifyBackup } from './lib/backup.mjs';
 import { executeMigration, planMigration } from './lib/migrate.mjs';
 import { cleanupPreview, previewExclusions, privacyView } from './lib/privacy.mjs';
+import { auditDiagnostics, buildDiagnostics, writeDiagnostics } from './lib/diagnostics.mjs';
 import { initStore } from './lib/init.mjs';
 import { planCodexBackfill, applyCodexBackfill } from './lib/ingest/backfill.mjs';
 import { startServer } from './dashboard.mjs';
@@ -41,7 +42,7 @@ if (command === 'help') {
   console.log(`Agent Memory ${VERSION}\nbootstrap --cwd PATH --query TEXT [--workspace ID] [--json] [--all] [--audit]\nrecall --query TEXT [--workspace ID|NAME|PATH] [--history]\nworkspace-add --cwd DIR  (register the project at DIR as a workspace so it can hold topics and events)\nregister --topic WORKSPACE/KEY --workspace ID --title TEXT [--alias TEXT]\nrecord --file EVENT.json | record --stdin\ncapture --file INPUT.json | capture --stdin  (input: {event, evidence_text})\nhabit-decide --file INPUT.json | habit-decide --stdin\nconsolidate  (pending means remaining; pendingBefore means starting backlog)
 retain --candidates [--since ISO] [--limit N]  (read-only: automatic checkpoints still undecided)
 retain --file DECISIONS.json | retain --stdin  ({decisions:[{event_id, decision: drop|keep, reason}]}; soft drop, consolidates)
-retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover captures, consume, refresh index and catalog)\nindex [--force]\ndashboard [--port N]  (start the read-only local management UI)\ningest-plan [--since ISO] [--limit N] [--root DIR] [--auto-register]  (read-only history backfill report)\ningest-apply [--since ISO] [--limit N] [--root DIR] [--auto-register]  (write backfilled turns as reported contexts)\ninit [--store DIR] [--obsidian-cli PATH] [--vault-name NAME]  (create an empty memory home and store; touches no agent)\nsetup [--hosts codex,claude,zcode,dsh] [--dry-run] [--check] [--uninstall] [--no-hooks]  (bind the memory system into installed agents)\nconfig validate|show|migrate [--dry-run|--apply] [--reveal-paths]  (read-only by default: validate the config, print the effective values and where each came from, or print the upgrade plan; migrate --apply writes it after a backup and a readback)\nbackup create --out DIR | backup verify --dir DIR  (write a private archive of the journal and the non-rebuildable state, or verify one against its checksums)\nrestore --dir DIR --into DIR [--execute]  (read-only plan by default: check traversal, symlinks, conflicts, free space and format before anything is written; --execute restores into a new directory and repoints its config)\nmigrate --to DIR [--execute]  (read-only plan by default: copy the home and store to a new location, verify every file, then repoint the copy; the source is never modified or deleted)\nprivacy show|exclusions [--preview FILE]|cleanup [--host H] [--workspace W] [--cwd DIR]  (read-only: print the effective collection policy and who decided it, evaluate the exclusion rules against sample values, or preview what a retention cleanup would touch; nothing is deleted and physical deletion is not offered)\naudit\ndoctor\nbootstrap/recall are read-only; --audit explicitly persists bootstrap diagnostics.\nMCP: agent_memory_read for reads; agent_memory for authorized writes.\nNew notes and appends are written as bytes and read back for verification; the default backend needs no external service.\nPolicy config: ${configPath}`);
+retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover captures, consume, refresh index and catalog)\nindex [--force]\ndashboard [--port N]  (start the read-only local management UI)\ningest-plan [--since ISO] [--limit N] [--root DIR] [--auto-register]  (read-only history backfill report)\ningest-apply [--since ISO] [--limit N] [--root DIR] [--auto-register]  (write backfilled turns as reported contexts)\ninit [--store DIR] [--obsidian-cli PATH] [--vault-name NAME]  (create an empty memory home and store; touches no agent)\nsetup [--hosts codex,claude,zcode,dsh] [--dry-run] [--check] [--uninstall] [--no-hooks]  (bind the memory system into installed agents)\nconfig validate|show|migrate [--dry-run|--apply] [--reveal-paths]  (read-only by default: validate the config, print the effective values and where each came from, or print the upgrade plan; migrate --apply writes it after a backup and a readback)\nbackup create --out DIR | backup verify --dir DIR  (write a private archive of the journal and the non-rebuildable state, or verify one against its checksums)\nrestore --dir DIR --into DIR [--execute]  (read-only plan by default: check traversal, symlinks, conflicts, free space and format before anything is written; --execute restores into a new directory and repoints its config)\nmigrate --to DIR [--execute]  (read-only plan by default: copy the home and store to a new location, verify every file, then repoint the copy; the source is never modified or deleted)\nprivacy show|exclusions [--preview FILE]|cleanup [--host H] [--workspace W] [--cwd DIR]|export --out FILE  (show/exclusions/cleanup are read-only: print the effective collection policy and who decided it, evaluate the exclusion rules against sample values, or preview what a retention cleanup would touch; export writes one redacted diagnostic file to --out, withholding session text, evidence bodies, full paths and credentials, and refuses if its own redaction self-check finds any)\naudit\ndoctor\nbootstrap/recall are read-only; --audit explicitly persists bootstrap diagnostics.\nMCP: agent_memory_read for reads; agent_memory for authorized writes.\nNew notes and appends are written as bytes and read back for verification; the default backend needs no external service.\nPolicy config: ${configPath}`);
 } else if (command === 'init') {
   const store = options.store ?? path.join(policyRoot, 'store');
   console.log(JSON.stringify(initStore({ home: policyRoot, store: String(store), obsidianCli: options['obsidian-cli'] ?? '', vaultName: options['vault-name'] ?? '' }), null, 2));
@@ -106,12 +107,13 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       applied: false, dryRun: true, note: '只读计划：没有写入任何文件，也没有创建任何目录。' }, null, 2));
   }
 } else if (command === 'privacy') {
-  // Read-only, like `config`: it answers "what would be collected, and who decided that" without
-  // writing a file. It runs before the home check so the defaults are reportable on a machine that
-  // has no home yet — which is exactly when a user is deciding whether to create one.
+  // `show`, `exclusions` and `cleanup` are read-only: they answer "what would be collected, and who
+  // decided that" without writing a file. They run before the home check so the defaults are
+  // reportable on a machine that has no home yet — exactly when a user is deciding whether to create
+  // one. `export` is the exception, and it writes exactly one file, at a path the user names.
   const action = subcommand || 'show';
-  if (!['show', 'exclusions', 'cleanup'].includes(action)) {
-    console.error('Usage: memkeel privacy show|exclusions [--preview FILE]|cleanup [--host H] [--workspace W] [--cwd DIR]');
+  if (!['show', 'exclusions', 'cleanup', 'export'].includes(action)) {
+    console.error('Usage: memkeel privacy show|exclusions [--preview FILE]|cleanup [--host H] [--workspace W] [--cwd DIR]|export --out FILE');
     process.exit(2);
   }
   let loaded = {};
@@ -123,7 +125,29 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
   };
   if (action === 'show') console.log(JSON.stringify({ home: policyRoot, ...privacyView(loaded, context) }, null, 2));
   else if (action === 'cleanup') console.log(JSON.stringify({ home: policyRoot, ...cleanupPreview(loaded, context) }, null, 2));
-  else {
+  else if (action === 'export') {
+    if (options.out === true || typeof options.out !== 'string') { console.error('privacy export requires --out FILE'); process.exit(2); }
+    const bundle = buildDiagnostics(loaded, { version: VERSION });
+    // Audit the real bytes before they are written, not after: an export that promises to be free of
+    // paths and credentials should be checked against what it actually contains, and a failed check
+    // must leave nothing behind.
+    const audit = auditDiagnostics(bundle, { home: policyRoot, store: loaded.vaultRoot });
+    if (!audit.clean) {
+      console.error(`privacy export: 脱敏自检未通过，未写出任何文件：${audit.leaks.map((leak) => leak.label).join('；')}`);
+      process.exitCode = 1;
+    } else {
+      try {
+        const written = writeDiagnostics(String(options.out), bundle);
+        console.log(JSON.stringify({ file: written.file, bytes: written.bytes, audit, counts: bundle.counts,
+          excluded: bundle.excluded, note: bundle.note }, null, 2));
+      } catch (error) {
+        // A refusal to overwrite is an ordinary outcome, not a crash: report it as a message rather
+        // than letting a stack trace stand in for an explanation.
+        console.error(`privacy export: ${error.message}`);
+        process.exitCode = 1;
+      }
+    }
+  } else {
     // `--preview` takes a JSON file of sample values, so a rule can be evaluated against the real
     // paths it is supposed to govern instead of being trusted because it looks right.
     if (options.preview === true) { console.error('privacy exclusions --preview requires a JSON file'); process.exit(2); }

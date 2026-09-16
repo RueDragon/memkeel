@@ -383,6 +383,7 @@ MEMKEEL_HOME=/srv/memkeel/home memkeel doctor
 | `privacy show [--host H] [--workspace W] [--cwd DIR]` | 只读。打印生效策略、下面的三态词表，以及**是哪个作用域做的决定** —— 一个说不出理由的开关，和一个 bug 无法区分。 |
 | `privacy exclusions --preview FILE` | 只读。用手写的 JSON 样本逐条评估排除规则，并指出没有命中任何样本的规则。 |
 | `privacy cleanup [--host H] [--workspace W] [--cwd DIR]` | 只读预览：保留清理会影响什么，以及明确不会影响什么。不删除任何东西。 |
+| `privacy export --out FILE` | 写出**一个**脱敏文件，可以直接交给别人：版本信息、计数、去掉凭据并把路径降级后的配置、以及生效的采集策略。不含会话正文、证据、完整路径与凭据。写出之前会先对自己的内容做一次自检（针对真实的字符串值而不是序列化文本），自检不通过就拒绝写出；已存在的文件也拒绝覆盖。 |
 
 ```json
 {
