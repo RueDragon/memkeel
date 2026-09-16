@@ -418,3 +418,39 @@ test('digest rebuild restores hook contexts in Shanghai day and preserves manual
   assert.equal(fs.readFileSync(inside(config.vaultRoot, journal), 'utf8'), original);
   assert.deepEqual(consolidate(config, transport).changed, []);
 });
+
+test('pending events spread over two Shanghai days get one digest each and never share text', (t) => {
+  const { config, transport, event } = fixture(t);
+  const base = { ...event, facts: [], actions: [], experiences: [], mistakes: [] };
+  const context = (id, task, text) => ({ id, task, text, certainty: 'reported', ttl_days: 30 });
+  record(config, transport, { ...base, event_id: 'evt-day-seven', occurred_at: '2026-09-07T02:00:00Z', recorded_at: '2026-09-07T02:00:30Z',
+    contexts: [context('ctx-seven', 'DaySevenTask', 'DaySevenSentinel')] });
+  record(config, transport, { ...base, event_id: 'evt-day-eight', occurred_at: '2026-09-08T02:00:00Z', recorded_at: '2026-09-08T02:00:30Z',
+    contexts: [context('ctx-eight', 'DayEightTask', 'DayEightSentinel')] });
+  consolidate(config, transport);
+  const digest = (day) => fs.readFileSync(inside(config.vaultRoot, `work/inbox/${day} - Agent 每日总结.md`), 'utf8');
+  assert.match(digest('2026-09-07'), /DaySevenSentinel/);
+  assert.doesNotMatch(digest('2026-09-07'), /DayEightSentinel/);
+  assert.match(digest('2026-09-08'), /DayEightSentinel/);
+  assert.doesNotMatch(digest('2026-09-08'), /DaySevenSentinel/);
+});
+
+test('localDay reuses one formatter instead of constructing one per call', () => {
+  // A timing assertion would be flaky; counting constructions pins the actual regression, because
+  // building an Intl.DateTimeFormat per call is what turned every localDay call site into a hot path.
+  const Original = Intl.DateTimeFormat;
+  let built = 0;
+  Intl.DateTimeFormat = function counted(...args) {
+    built += 1;
+    return new Original(...args);
+  };
+  Intl.DateTimeFormat.prototype = Original.prototype;
+  try {
+    for (let index = 0; index < 200; index += 1) {
+      localDay(`2026-09-${String((index % 28) + 1).padStart(2, '0')}T00:00:00Z`);
+    }
+  } finally {
+    Intl.DateTimeFormat = Original;
+  }
+  assert.ok(built <= 1, `localDay must reuse a module-level formatter, but built ${built}`);
+});

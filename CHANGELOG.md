@@ -9,6 +9,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Fixed: `localDay` rebuilt an `Intl.DateTimeFormat` on every call, so consolidating a large ledger spent
+  much of its time constructing formatters.** The function created a new formatter per invocation, and
+  `consolidate` called it once per visible event for every pending day, so even a single pending event
+  re-derived the day of the whole ledger. Measured at 8000 events, 8000 `localDay` calls cost 440 ms
+  (about 55 us each) against 11 ms through one shared formatter — a 40x difference. The formatter is now
+  module-level and the daily-digest loop buckets visible events by day in a single pass, so the loop is
+  O(visible + days) instead of O(visible x days). This removes roughly 0.4 s of a 7.3 s
+  single-pending-event `consolidate` at 8000 events; **the remaining cost is not yet attributed** and is
+  listed as open in `PERFORMANCE.md`. The regression test counts formatter constructions instead of
+  asserting a duration, so it cannot become a flaky timing test.
 - **`scripts/release-check.mjs` and `RELEASE.md`: a release is verified from the artifact.** The check
   runs the gates, packs the tarball into a temporary directory (the repository is never written to),
   asserts the required documents are inside it and the forbidden ones are not, checks the version against

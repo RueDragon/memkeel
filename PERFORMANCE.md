@@ -257,7 +257,7 @@ more iterations, not a re-reading of these numbers.
 
 ## What has not been done
 
-**Four optimisations have been made (above), and the write path's own structure is still untouched.**
+**Six optimisations have been made (four in the sections above, two in the list below).**
 The plan requires that performance work not change retrieval or reduction semantics, so each step is
 taken on its own with the full suite behind it rather than several at once.
 
@@ -274,9 +274,23 @@ The order to try next, cheapest and safest first:
 3. ~~Cache the journal parse per file.~~ Tried, measured, **reverted** — the parse is ~1% of a replay.
    The measurement that disproved it is in optimisation 3, and it redirected the work to `inside()`.
 4. ~~Resolve the root's real path once instead of per call.~~ Done — 1.5-2.2× across most operations.
-5. What is left of the write path is the per-write full replay itself and `preferenceProjection` over
-   every event. Both are O(N) per write and need their own design; `consolidate` and `bootstrap` may
-   matter more than the per-write cost, and neither has been profiled yet.
+5. `consolidate` has now been profiled and it is the largest single number in this document: at 8000
+   events a single pending event still costs 7286 ms while all of its managed writes total 69 ms, and
+   with every event pending it is 21315 ms against 32 writes totalling 193 ms. Ruling pieces out was the
+   whole result — `reduceEvents` (45.4 → 91.4 ms), `learningBody` (3.0 → 7.1 ms), `preferenceProjection`
+   (0.8 → 0.2 ms), cached `loadEvents` (2.1 → 13.5 ms), per-event `JSON.stringify` (1.8 → 13.8 ms),
+   `consumptionStatus` (35 → 53 ms over 2k → 8k, including hashing every event) and the day loop are all
+   linear and together account for well under 1 s. **About 6.6 s of that 7.3 s is therefore not yet
+   attributed**, and nothing here is claimed that was not measured.
+6. ~~`localDay` rebuilt an `Intl.DateTimeFormat` on every call.~~ **Done** — the only super-linear shape
+   found so far. 8000 calls cost 440 ms (about 55 us each) against 11 ms through one shared formatter
+   (40x), and `consolidate` called it once per visible event *per pending day*, so a single pending event
+   still re-derived the day of the whole ledger. The formatter is now module-level and the day loop
+   buckets in one pass instead of filtering per day. It removes only ~0.4 s of the 7.3 s above, which is
+   exactly why it is reported here and not as a headline result.
+7. What is left of the write path is the per-write full replay itself and `preferenceProjection` over
+   every event. Both are O(N) per write and need their own design; `bootstrap` has still not been
+   profiled.
 
 ## Not measured at all
 
