@@ -9,6 +9,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`memkeel migrate --to DIR`.** Moves a live memory home and store to a new location: a read-only
+  plan by default, or a copy plus a repointed `config.json` with `--execute`. It reuses the archive's
+  classification of what has to be carried, so "what must be copied" has one answer rather than two
+  that can drift apart. The source is never modified or deleted, and the command prints the remaining
+  steps — repoint `MEMKEEL_HOME`, re-run `setup`, remove the old home yourself — instead of inferring
+  them from a successful run.
+- **`config.json` is excluded from the copy loop and written last.** Not copied and then rewritten:
+  an interrupted migration therefore leaves a destination with *no* configuration, which cannot be
+  mistaken for a working home. Had the configuration been copied first, a failure partway through
+  would leave a destination that looks like a home and reads the source store — a migration that
+  reports nothing and changes nothing. The invariant is covered by a test that injects a failure
+  mid-copy and asserts the destination has no configuration.
+- **A migration refuses destinations it cannot do correctly.** A destination overlapping the source in
+  either direction (compared after resolving symlinks, so a link cannot hide one), a destination
+  inside the memkeel checkout, or a destination that already holds data. Recorded evidence keeps the
+  paths it was written with, and workspace aliases travel verbatim.
 - **`memkeel backup create` / `backup verify` / `restore`.** An archive of the journal, the memory
   home's configuration, the shared policy source and the state that cannot be recomputed — the
   installation receipt, retention decisions, pending captures and the checkpoint queue. The search

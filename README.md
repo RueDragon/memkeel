@@ -369,6 +369,36 @@ carried at all. The archive directory is created `0700`, but that is all this pr
   existing non-empty destination is refused. Overwriting in place needs a pre-restore snapshot and an
   explicit confirmation step, and that is deliberately not improvised here.
 
+### Moving a store
+
+A restore brings a store back; a migration moves the live one. They are different operations with
+the same shape — copy, verify, repoint — so they share one classification of what has to be carried
+and one rule about where the configuration is written.
+
+| Command | What it does |
+| --- | --- |
+| `migrate --to DIR` | Read-only plan. Reports the source, the destination, the file and byte counts, the configuration keys that would be rewritten, and the workspace aliases in effect. Writes nothing. |
+| `migrate --to DIR --execute` | Copies the home and store to `DIR/home` and `DIR/store`, verifies each file against the hash it read, and writes the repointed `config.json` **last**. Refuses a destination that overlaps the source, sits inside the memkeel checkout, or already holds data. |
+
+```bash
+memkeel migrate --to /srv/memkeel            # plan only
+memkeel migrate --to /srv/memkeel --execute
+MEMKEEL_HOME=/srv/memkeel/home memkeel doctor
+```
+
+Three properties are worth stating because each is a way this goes wrong:
+
+- **The source is never modified or deleted.** A migration is a copy plus a switch. Removing the old
+  home is a separate, deliberate act by a human, and the command prints it as such rather than
+  inferring it from a successful run.
+- **The configuration is written last.** `config.json` is excluded from the copy loop entirely, not
+  copied and then rewritten: an interrupted run therefore leaves a destination with no configuration
+  at all, which cannot be mistaken for a working home. A destination whose config still named the old
+  store would look like a completed migration and read the source store.
+- **Recorded evidence is not rewritten.** Events keep the evidence paths they were written with.
+  Workspace aliases travel verbatim, because an alias is how a moved project directory keeps
+  resolving to the same workspace; the ledger is a record of what happened, not a set of live links.
+
 ### Reading
 
 | Command | What it does |
