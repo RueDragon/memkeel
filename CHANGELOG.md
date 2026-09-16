@@ -9,6 +9,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **All four hosts are covered by an isolated binding round-trip.** The host matrix had no coverage
+  for Claude Code or dsh at all. A test now drives Codex, Claude Code, ZCode and dsh through the same
+  cycle inside a throwaway tree — with every host directory, the user profile and the memory home
+  redirected — asserting that a dry run writes nothing, that installing binds, that repeating changes
+  no host file, that an edit the install did not make is refused (and that `--force` does not discard
+  it), and that uninstall restores the original bytes and empties the receipt. It also covers dsh's
+  three profiles (and that an absent profile is deliberately not created) and Claude's split layout,
+  where hooks and the policy follow `CLAUDE_CONFIG_DIR` while the MCP server lives in `~/.claude.json`.
+- **The generated launcher is executed, from a path built to break quoting.** The binding embeds the
+  memory home in a command string for Codex and Claude, so a home containing spaces, quotes and `&`
+  would break every hook at runtime. A test binds exactly such a home, takes the `command` the host
+  would run, runs it through a real shell with a hook payload on standard input, and asserts it
+  returns a well-formed hook result.
 - **One shared config contract (`lib/config.mjs`).** The CLI, the MCP server, the hook runner and
   the web console each used to repeat the same read-and-normalise line, so a default or a
   validation rule could drift between them. They now share one loader, one home precedence

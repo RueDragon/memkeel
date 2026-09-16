@@ -365,8 +365,9 @@ for (const id of selected) {
       if (next === null) skip(`${id}-policy`, 'nothing to do');
       else writeIfChanged(file, next, `${id}-policy`);
     }
-    // ZCode ships its own memory feature. Leaving it enabled duplicates context, so
-    // it is switched off on install; uninstall deliberately does not switch it back on.
+    // ZCode ships its own memory feature. Leaving it enabled duplicates context, so it is switched
+    // off on install. Uninstall restores the recorded bytes, so the host's own setting returns to
+    // whatever the user had before we ever touched the file - we never replay our own preference.
     const legacyFile = host.legacy(dir);
     if (legacyFile && !uninstall && fs.existsSync(legacyFile)) {
       const next = jsonMcp(legacyFile, (config) => {
