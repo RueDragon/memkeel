@@ -9,6 +9,39 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A collection policy that actually stops collection.** `collection` in `config.json` decides, once,
+  whether a conversation may be collected, and the answer is consulted by every layer that writes
+  conversation text: the hook queue, checkpoint draining (queue → evidence), the access log, and
+  historical ingest. This is the difference the plan asks for — the switch is not a rendering
+  setting. The test does not assert that a flag is false: it runs a turn with collection off, walks
+  every file under the memory home and the store, and asserts the text is nowhere — then repeats the
+  run with collection on to prove the search would have found it. That test found two real leaks
+  while it was being written (the prompt was also persisted in `state.factRecall`, and in the session
+  file's `prompt`), both of which are now gated too.
+- **Four scopes, ordered so the answer can only get more private.** `enabled: false` is a hard stop
+  that no narrower scope can override; then an exclusion rule that matches; then
+  `workspaces[<id>] === false`; then `hosts[<host>] === false`. `true` values are accepted but never
+  override a broader denial — a global off switch that a stale per-host entry could re-enable would
+  be a trap rather than a feature.
+- **Exclusion rules with stated semantics and a preview.** `exclude.paths` matches a directory itself
+  and everything inside it (not a name that merely shares a prefix), while `exclude.sessionTypes` and
+  `exclude.sources` match the whole value. `memkeel privacy exclusions --preview FILE` evaluates the
+  rules against real sample values and names the rules nothing matched, so the semantics can be
+  inspected before they are relied on.
+- **`memkeel privacy show|exclusions|cleanup`.** Read-only. `show` prints the effective policy and
+  *which scope decided it* — an off switch with no explanation is indistinguishable from a bug.
+  `cleanup` previews what a retention cleanup would touch and lists what it would not (the ledger, the
+  backups, the host's own transcripts). Nothing is deleted.
+- **Turning collection off covers what is already queued.** A checkpoint written before the switch
+  was turned off does not become evidence afterwards: the drain marks it `held` and defers it rather
+  than promoting it or discarding it, so turning collection back on drains it normally. `held` is a
+  recognised status in the health check — reported with its reason, but not counted as a fault, since
+  a permanently red `doctor` for an intentional setting is just noise.
+- **Three states that are kept apart in the payload, not only in prose.** `not-collected`,
+  `retained-not-retrieved` and `physically-deleted`, the last marked `supported: false`. Physical
+  deletion is deliberately not offered: the ledger is append-only and event-verified, deleting in
+  place would break its own integrity, and it cannot recall backups or external copies that already
+  exist. The honest deliverable is an accurate statement of scope.
 - **`memkeel migrate --to DIR`.** Moves a live memory home and store to a new location: a read-only
   plan by default, or a copy plus a repointed `config.json` with `--execute`. It reuses the archive's
   classification of what has to be carried, so "what must be copied" has one answer rather than two

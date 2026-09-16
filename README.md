@@ -399,6 +399,66 @@ Three properties are worth stating because each is a way this goes wrong:
   Workspace aliases travel verbatim, because an alias is how a moved project directory keeps
   resolving to the same workspace; the ledger is a record of what happened, not a set of live links.
 
+### Collection and privacy
+
+Collection is off means off. `collection` in `config.json` is consulted by every layer that writes
+conversation text, not by the pages that display it:
+
+| Layer | What the switch does |
+| --- | --- |
+| Hook queue | Nothing is queued. The text never reaches `state/hook-queue/`. |
+| Session file | The prompt and the last reply are not written to `state/hook-sessions/`, and neither is the recall query in `factRecall`. |
+| Checkpoint drain | A checkpoint queued *before* the switch was turned off is `held`, not promoted to evidence. Held rows drain normally once collection is on again. |
+| Access log | No entry is appended for a workspace that opted out. |
+| Historical ingest | `ingest-apply` skips candidates whose workspace, host or path is not collected. |
+
+| Command | What it does |
+| --- | --- |
+| `privacy show [--host H] [--workspace W] [--cwd DIR]` | Read-only. Prints the effective policy, the vocabulary below, and **which scope decided** — a switch that cannot explain itself is indistinguishable from a bug. |
+| `privacy exclusions --preview FILE` | Read-only. Evaluates each exclusion rule against sample values from a JSON file and names the rules nothing matched. |
+| `privacy cleanup [--host H] [--workspace W] [--cwd DIR]` | Read-only preview of what a retention cleanup would touch, and an explicit list of what it would not. Deletes nothing. |
+
+```json
+{
+  "collection": {
+    "enabled": true,
+    "hosts": { "codex": false },
+    "workspaces": { "project-a1b2c3": false },
+    "exclude": { "paths": ["/srv/private"], "sessionTypes": ["scratch"], "sources": ["transcript"] },
+    "retention": { "contextDays": 30, "backups": 5, "diagnosticsDays": 14 }
+  }
+}
+```
+
+The scopes are ordered so the answer can only ever become *more* private:
+
+1. `enabled: false` is a hard stop. Nothing below it re-enables collection. A global off switch that a
+   stale per-host entry could override would be a trap, not a feature.
+2. An exclusion rule that matches wins. An explicit denial is the most specific thing a user can say.
+3. `workspaces[<id>] === false`.
+4. `hosts[<host>] === false`.
+
+`true` values are accepted so a config can state its intent, but they never override a broader
+denial. An absent or malformed `collection` section means **collect** — so an existing store keeps
+behaving exactly as it did before this switch existed — and a typo can never silently stop collection.
+
+Matching is exact and each kind says what it means: a `paths` rule matches the directory itself and
+everything inside it (not `workshop` when the rule is `work`), while `sessionTypes` and `sources`
+match the whole value. There are no globs and no substring surprises.
+
+**Three different things get called "deleted", so they are named separately** — in the payload, not
+only here:
+
+- **不采集 / not collected** — the conversation was never written. No queue entry, no checkpoint, no
+  evidence, no access-log entry. Nothing to reverse.
+- **软删除 / retained but not retrieved** — the original record is still complete in the ledger; it
+  just stops entering default summaries and ordinary recall. History and provenance remain traceable.
+- **物理删除 / physically deleted** — **not offered.** The ledger is append-only and every event is
+  verified, so deleting in place would break its own integrity, and it cannot recall backups,
+  snapshots or external copies that already exist. What you can do instead: stop collection, exclude
+  the sensitive paths *before* collecting, and let retention expire derived material — see
+  `memkeel privacy cleanup` for the exact scope.
+
 ### Reading
 
 | Command | What it does |
