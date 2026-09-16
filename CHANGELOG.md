@@ -9,6 +9,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`scripts/release-check.mjs` and `RELEASE.md`: a release is verified from the artifact.** The check
+  runs the gates, packs the tarball into a temporary directory (the repository is never written to),
+  asserts the required documents are inside it and the forbidden ones are not, checks the version against
+  the changelog, refuses a shipped module that imports a `.ts` file at runtime, installs the tarball into
+  an empty prefix and runs the installed CLI, and prints the SHA-256. `RELEASE.md` records the versioning
+  policy, the platform matrix CI actually exercises, the breaking changes to state in release notes, and
+  the upgrade and rollback procedure. It publishes nothing and never touches an existing installation —
+  both are the maintainer's decisions, not a script's.
+- **The release check found a real blocker, and it is not fixed: the published package cannot run when
+  installed.** `lib/core.mjs` imports `vendor/obsidian-mind/session-start.ts` at runtime, and Node refuses
+  to strip TypeScript types under `node_modules`, so every command fails from an installed package while a
+  clone works. It survived because `test/package-install.test.mjs` unpacks the tarball into a temporary
+  directory and runs it from there — extraction, not installation, so the path is never under
+  `node_modules`. The failure, why it was invisible, and three candidate fixes are written up in
+  `RELEASE.md`; the check fails for this reason and that failure is correct. **`npm publish` must not ship
+  this as a working release until it is fixed.**
 - **A collection policy that actually stops collection.** `collection` in `config.json` decides, once,
   whether a conversation may be collected, and the answer is consulted by every layer that writes
   conversation text: the hook queue, checkpoint draining (queue → evidence), the access log, and
