@@ -352,6 +352,60 @@ export default function Settings({ reload }) {
 
   return (
     <Form form={form} layout="vertical" onFinish={submit} requiredMark>
+      {!settings.exists && (
+        <div className="panel" style={{ marginBottom: 12 }}>
+          <h3 className="panel-title">第一次使用：先建立存储</h3>
+          <div>
+            <Alert
+              type="info"
+              showIcon
+              message="这个程序把两样东西分开放在两个目录里，先分清它们，后面每一步都会更清楚"
+              description={(
+                <div>
+                  <div style={{ marginTop: 4 }}>
+                    <b>memory home（配置与运行时状态）</b>：<span className="mono">config.json</span>、共享策略源、
+                    安装记录、待补证据的 capture、检查点队列。它记录的是「程序怎么工作」。
+                  </div>
+                  <div style={{ marginTop: 4 }}>
+                    <b>store（你的记忆）</b>：事件账本、主题页、笔记与证据。它记录的是「你想记住什么」。
+                  </div>
+                  <div className="muted" style={{ marginTop: 6 }}>
+                    两者可以指向同一个目录，但分开更清楚 —— 备份、迁移与目录权限都是按这两个根分别计算的，混在一起会让「我备份的是配置还是记忆」变成一个需要猜的问题。
+                  </div>
+                </div>
+              )}
+            />
+            <Divider plain style={{ margin: '12px 0' }}>建议顺序</Divider>
+            <ol className="settings-paths">
+              <li>
+                <b>创建存储</b>：在下面填好 memoryRoot 与 vaultRoot 并保存，程序会创建目录并写出
+                <span className="mono"> config.json</span>。也可以改用命令行 <span className="mono">memkeel init --store 目录</span>。
+                这一页不会替你凭空创建目录，保存之前它什么都不会写。
+              </li>
+              <li>
+                <b>选择宿主</b>：决定要接入哪些 agent（Codex / Claude Code / ZCode / dsh）。不接也能用命令行，
+                接入只是让它们在会话开始时自动读到记忆。
+              </li>
+              <li>
+                <b>预览绑定</b>：绑定会改写其他应用的配置文件，所以先看会改什么 ——{' '}
+                <Text className="mono" copyable={{ text: settings.setup?.dryRun ?? '' }}>{settings.setup?.dryRun}</Text>
+              </li>
+              <li>
+                <b>检查健康</b>：确认绑定与存储都读得到 ——{' '}
+                <Text className="mono" copyable={{ text: settings.setup?.check ?? '' }}>{settings.setup?.check}</Text>
+                ，然后 <span className="mono">memkeel doctor</span>。
+              </li>
+            </ol>
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginTop: 10 }}
+              message="本页不会写宿主配置，也不会重启任何进程"
+              description="第 3、4 步的命令需要你在终端里确认执行。写入宿主配置是不可逆的一步（会改到 Codex、Claude Code 等应用的配置文件），所以它必须由你亲自触发，而不是打开一个页面就发生。"
+            />
+          </div>
+        </div>
+      )}
       <div className="panel">
         <h3 className="panel-title">配置文件</h3>
         <div>
