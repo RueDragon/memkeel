@@ -534,6 +534,11 @@ npm run pack-scan # node scripts/pack-scan.mjs  （真实 npm pack 产物）
 
 ### 升级与部署注意事项
 
+- **`setup` 会保留一份带版本号的安装记录**，位于 `<memory home>/state/setup-receipt.json`：逐文件
+  记录安装前的原始字节与它写入的字节。`setup --uninstall` 依赖它恢复，并会拒绝安装之后被改动过的
+  文件，所以请把它当作私密数据、不要手工编辑。安装被中断不会致命 —— 重新运行 `setup` 即可补齐。
+  `memkeel doctor` 会报告该记录的格式与跟踪文件数，以及这次究竟是 `--home` / `MEMKEEL_HOME` /
+  默认值中的哪一个决定了 memory home。
 - Codex 默认对全部模型延后 advisory 注入，旧模型列表（包括空列表）不再生效。
   只有显式设置 `hook.codexDeferAdvisory: false` 才会关闭保护。
 - 安装时会将记忆目录的绝对路径写入 MCP 和 Hook 启动参数。升级旧绑定先执行

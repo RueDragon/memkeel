@@ -47,15 +47,40 @@ const yaml = (text) => JSON.stringify(text);
 const report = [];
 const backupDir = path.join(memoryHome, 'backups', `setup-${Date.now()}`);
 let wrote = false;
-// A durable receipt retains the first pre-install bytes and the latest installed
-// bytes. Restore refuses changed files instead of overwriting later user edits.
+// A durable receipt records what this install did: per file, the first pre-install bytes and the
+// latest installed bytes, so a restore can tell "ours" from "changed since we wrote it".
+//
+// It is versioned and self-describing because the restore chain has to outlive an upgrade of the
+// program itself: a receipt written by an older build stays readable, and one written now records
+// which home and which hosts it belongs to.
+const RECEIPT_FORMAT = 1;
 const receiptFile = path.join(memoryHome, 'state', 'setup-receipt.json');
-const receipt = fs.existsSync(receiptFile) ? JSON.parse(fs.readFileSync(receiptFile, 'utf8')) : { files: {} };
+let loadedReceipt = null;
+if (fs.existsSync(receiptFile)) {
+  const unusable = (why) => {
+    console.error(`setup: ${why} (${receiptFile})\nThe restore chain for files this install already changed lives in that record, so setup will not overwrite one it cannot read. Repair or remove it deliberately, then run setup again.`);
+    process.exit(1);
+  };
+  try { loadedReceipt = JSON.parse(fs.readFileSync(receiptFile, 'utf8')); }
+  catch (error) { unusable(`the installation receipt is not valid JSON: ${error.message}`); }
+  if (!loadedReceipt?.files || typeof loadedReceipt.files !== 'object' || Array.isArray(loadedReceipt.files)) {
+    unusable('the installation receipt is malformed: expected a "files" object');
+  }
+}
+// A receipt written before the format field existed is read as-is and upgraded on the next write.
+const legacyReceipt = Boolean(loadedReceipt) && loadedReceipt.format === undefined;
+const receipt = loadedReceipt ?? { files: {} };
 
 function writeIfChanged(file, next, label) {
   const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
   if (old === next) { report.push({ label, file, changed: false }); return; }
-  if (receipt.files[file] && old !== receipt.files[file].after) throw new Error('Configuration changed since setup; review and restore manually before rebinding: ' + file);
+  const row = receipt.files[file];
+  // Only an UNKNOWN state is refused. `before` and `after` are both states this install is
+  // responsible for, so a file still sitting in its pre-install state is safe to write - and that
+  // is what makes an interrupted install recoverable by running setup again. Anything else is
+  // someone else's edit and has to be reviewed by hand. This is the same rule the uninstall
+  // preflight already applies, so the two paths now agree.
+  if (row && old !== row.after && old !== row.before) throw new Error('Configuration changed since setup; review and restore manually before rebinding: ' + file);
   report.push({ label, file, changed: true, mode: dryRun ? 'dry-run' : check ? 'check' : 'write' });
   if (dryRun || check) return;
   wrote = true;
@@ -66,13 +91,21 @@ function writeIfChanged(file, next, label) {
   if (old) fs.writeFileSync(path.join(backupDir, `${label}-${sha(file).slice(0, 8)}${path.extname(file) || '.txt'}`), old, 'utf8');
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') !== old) throw new Error(`Concurrent edit detected: ${file}`);
-  if (!uninstall) {
-    receipt.files[file] ??= { before: fs.existsSync(file) ? old : null, label };
-    receipt.files[file].after = next;
-    atomicJson(receiptFile, receipt);
-  }
+  const before = fs.existsSync(file) ? old : null;
   fs.writeFileSync(file, next, 'utf8');
   if (fs.readFileSync(file, 'utf8') !== next) throw new Error(`Readback mismatch: ${file}`);
+  // The receipt is recorded after the file, never before. A receipt that claims an installed state
+  // the filesystem does not have would make every later run refuse that file, so a crash between
+  // the two writes must leave the receipt behind rather than ahead of reality.
+  if (!uninstall) {
+    const previous = receipt.files[file];
+    receipt.format = RECEIPT_FORMAT;
+    receipt.memoryHome = memoryHome;
+    receipt.scope = selected;
+    receipt.at = new Date().toISOString();
+    receipt.files[file] = { label, before: previous?.before ?? before, after: next };
+    atomicJson(receiptFile, receipt);
+  }
 }
 function skip(label, reason) { report.push({ label, skipped: true, reason }); }
 
@@ -340,6 +373,15 @@ if (!dryRun && !check && !uninstall) {
 const summary = {
   mode: uninstall ? 'uninstall' : dryRun ? 'dry-run' : check ? 'check' : 'apply',
   memoryHome,
+  // The restore chain is reported, not just maintained: a legacy or malformed receipt is exactly
+  // what makes a later uninstall fail closed, so the user should see it before that happens.
+  receipt: {
+    file: receiptFile,
+    exists: Boolean(loadedReceipt),
+    format: receipt.format ?? null,
+    legacy: legacyReceipt,
+    files: Object.keys(receipt.files).length,
+  },
   changed: report.filter((row) => row.changed).length,
   skipped: report.filter((row) => row.skipped).length,
   report,

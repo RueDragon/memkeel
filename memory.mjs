@@ -193,10 +193,21 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       // how a killed drain blocked every later checkpoint for seven hours unnoticed.
       const lock = inspectLock(path.join(policyRoot, 'state'));
       const checkpointLock = inspectLock(path.join(policyRoot, 'state/hook-queue'));
-      const check = { version: VERSION, missing, captures, checkpoints: checkpointHealth(config, loadEvents(config)), lock, checkpointLock,
+      // The restore chain and the home that was actually chosen, reported together: a legacy or
+      // malformed receipt is what makes a later `setup --uninstall` fail closed, and an
+      // unexpected home is the usual reason a command "loses" a store.
+      const receiptPath = path.join(policyRoot, 'state', 'setup-receipt.json');
+      let receipt = { exists: false };
+      if (fs.existsSync(receiptPath)) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+          receipt = { exists: true, format: raw.format ?? null, legacy: raw.format === undefined, files: Object.keys(raw.files ?? {}).length, at: raw.at ?? null, memoryHome: raw.memoryHome ?? null };
+        } catch (error) { receipt = { exists: true, malformed: error.message }; }
+      }
+      const check = { version: VERSION, effectiveHome: { path: policyRoot, source: homeSource }, missing, captures, checkpoints: checkpointHealth(config, loadEvents(config)), lock, checkpointLock, receipt,
         routes: loadRoutes(config).map((row) => row.id), engine: 'obsidian-mind/af615d1 applyInjectionBudget (read-only adapter)', hostIntegration: 'File verification is not a host new-session smoke test.' };
       console.log(JSON.stringify(check, null, 2));
-      if (missing.length || lock.stale || checkpointLock.stale || check.captures.pending.length || !check.checkpoints.healthy) process.exitCode = 1;
+      if (missing.length || lock.stale || checkpointLock.stale || check.captures.pending.length || !check.checkpoints.healthy || receipt.malformed) process.exitCode = 1;
     } else throw new Error(`Unknown command: ${command}`);
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

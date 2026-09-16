@@ -27,6 +27,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   build no transport, so an invalid config cannot create a directory or touch a host binding.
 - **A document schema separate from the release version.** `configSchema` records the shape of the
   file; `version` records which release wrote it and is never rewritten by a migration.
+- **A versioned, self-describing installation receipt.** `state/setup-receipt.json` now records its
+  own `format`, the `memoryHome` and `scope` it belongs to, and when it was last written, so the
+  restore chain survives an upgrade of the program. A receipt written by an older build stays
+  readable and is upgraded on the next write; `setup` reports the receipt state in its summary.
+  An unreadable receipt is refused with one actionable line instead of being overwritten.
+- **`memkeel doctor` reports the effective home and the restore record.** It prints which of
+  `--home` / `MEMKEEL_HOME` / the default chose the home, and the receipt's format, age and file
+  count. An unreadable receipt marks the store unhealthy, because that is exactly what makes a
+  later `setup --uninstall` fail closed.
 - **`npm run pack-scan`: a packaged-artifact gate.** A clean working tree says nothing about
   what `npm pack` ships, so this gate packs, unpacks the real tarball in a temporary directory,
   checks that every shipped file is declared in `package.json` `files`, and scans the unpacked
@@ -62,6 +71,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An interrupted `setup` no longer bricks a host binding.** The receipt used to be written
+  *before* the file it describes, so a crash in between left a receipt claiming an installed state
+  the filesystem did not have. Because the write guard only accepted the "installed" state, every
+  later `setup` then refused that file with "Configuration changed since setup" until someone
+  edited the receipt by hand. The receipt is now recorded after the file, and the guard accepts
+  both states this install owns — the pre-install bytes and the installed bytes — refusing only an
+  unknown state. That is the same rule the uninstall preflight already applied, so the two paths
+  now agree; a later user edit is still refused.
 - **Both READMEs described `version` as the config schema version, and documented a
   `hook.codexDeferredAdvisoryModels` key the code does not read.** `version` records the release
   that wrote the file; the document shape is `configSchema`. The real key is

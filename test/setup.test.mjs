@@ -190,3 +190,99 @@ test('one refusing host does not block the others, and a retry completes it with
   assert.equal(fs.readFileSync(zcodeConfig, 'utf8'), afterFirst);
   for (const groups of Object.values(bound.hooks.events)) assert.equal(groups.length, 1);
 });
+
+// ------------------------------------------------------- install receipt (DEP-02)
+
+/** The durable restore chain: per file, the pre-install bytes and the latest installed bytes. */
+function receiptOf(home) {
+  return JSON.parse(fs.readFileSync(path.join(home, 'state/setup-receipt.json'), 'utf8'));
+}
+
+test('an interrupted install is recoverable by running setup again', (t) => {
+  const { host, home, run } = fixture(t);
+  const config = path.join(host, 'config.toml');
+  const original = 'model = "demo"\n';
+  fs.writeFileSync(config, original);
+  assert.equal(run('setup', '--hosts', 'codex').status, 0);
+  const installed = fs.readFileSync(config, 'utf8');
+  const row = receiptOf(home).files[config];
+  assert.equal(row.before, original, 'the receipt must keep the first pre-install bytes');
+
+  // A crash between the file write and the receipt write, or a hand-restored file, leaves the
+  // file in its pre-install state. That is a state this install owns, so writing again is safe;
+  // refusing it would brick the binding until someone edited the receipt by hand.
+  fs.writeFileSync(config, original, 'utf8');
+  const again = run('setup', '--hosts', 'codex');
+  assert.equal(again.status, 0, again.stderr);
+  assert.equal(fs.readFileSync(config, 'utf8'), installed);
+});
+
+test('the receipt is versioned and records the home and scope it belongs to', (t) => {
+  const { host, home, run } = fixture(t);
+  fs.writeFileSync(path.join(host, 'config.toml'), 'model = "demo"\n');
+  assert.equal(run('setup', '--hosts', 'codex').status, 0);
+  const receipt = receiptOf(home);
+  assert.equal(receipt.format, 1);
+  assert.equal(receipt.memoryHome, home);
+  assert.deepEqual(receipt.scope, ['codex']);
+  assert.match(receipt.at, /^\d{4}-\d\d-\d\dT/);
+  assert.ok(Object.keys(receipt.files).length > 0);
+});
+
+test('a receipt from before the format field is reported and still restores', (t) => {
+  const { host, home, run } = fixture(t);
+  const config = path.join(host, 'config.toml');
+  const original = 'model = "demo"\n';
+  fs.writeFileSync(config, original);
+  assert.equal(run('setup', '--hosts', 'codex').status, 0);
+
+  const receiptPath = path.join(home, 'state/setup-receipt.json');
+  const legacy = receiptOf(home);
+  delete legacy.format; delete legacy.memoryHome; delete legacy.scope; delete legacy.at;
+  fs.writeFileSync(receiptPath, JSON.stringify(legacy, null, 2));
+
+  const check = run('setup', '--hosts', 'codex', '--check');
+  assert.equal(check.status, 0, check.stderr);
+  assert.equal(JSON.parse(check.stdout).receipt.legacy, true);
+  assert.equal(JSON.parse(check.stdout).receipt.format, null);
+
+  // The restore chain is the recorded bytes, not the format field, so uninstall still works.
+  assert.equal(run('setup', '--hosts', 'codex', '--uninstall').status, 0);
+  assert.equal(fs.readFileSync(config, 'utf8'), original);
+});
+
+test('a malformed receipt is refused instead of being silently overwritten', (t) => {
+  const { home, run } = fixture(t);
+  const receiptPath = path.join(home, 'state', 'setup-receipt.json');
+  const broken = JSON.stringify({ files: ['not-an-object'] });
+  fs.writeFileSync(receiptPath, broken);
+  const result = run('setup', '--hosts', 'codex');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /installation receipt is malformed/);
+  // A clean refusal, not a stack trace a user cannot act on.
+  assert.doesNotMatch(result.stderr, /\n\s+at /);
+  assert.equal(fs.readFileSync(receiptPath, 'utf8'), broken, 'the unreadable record is preserved for inspection');
+});
+
+test('doctor reports the effective home and the receipt state', (t) => {
+  const { host, home, run } = fixture(t);
+  fs.writeFileSync(path.join(host, 'config.toml'), 'model = "demo"\n');
+  assert.equal(run('setup', '--hosts', 'codex').status, 0);
+  const doctor = run('doctor');
+  assert.equal(doctor.status, 0, doctor.stdout);
+  const report = JSON.parse(doctor.stdout);
+  assert.equal(report.effectiveHome.path, home);
+  assert.equal(report.effectiveHome.source, 'explicit --home');
+  assert.equal(report.receipt.exists, true);
+  assert.equal(report.receipt.format, 1);
+  assert.equal(report.receipt.legacy, false);
+  assert.ok(report.receipt.files > 0);
+});
+
+test('an unreadable receipt makes doctor unhealthy', (t) => {
+  const { home, run } = fixture(t);
+  fs.writeFileSync(path.join(home, 'state', 'setup-receipt.json'), '{ not json');
+  const doctor = run('doctor');
+  assert.equal(doctor.status, 1);
+  assert.match(JSON.parse(doctor.stdout).receipt.malformed, /JSON/);
+});
