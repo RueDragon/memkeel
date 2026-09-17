@@ -9,6 +9,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Library code no longer picks a language: it emits message references.** `lib/cleanup.mjs` used to
+  build its retention plan out of Chinese sentences, so `memkeel privacy cleanup` printed English
+  error lines next to a Chinese plan and there was no way to render that plan in another language at
+  all. The plan now carries `{ key, params }` references and whoever prints it renders them:
+  `lib/messages.mjs` gains `msg()`, `isMessageReference()` and `renderMessages()`, and the CLI renders
+  the payload before printing it, so its JSON output stays prose while the plan itself stays
+  language-neutral. This is also the mechanism the dashboard and the diagnostics export will need,
+  because both display prose that originates in `lib/` while the language is chosen on the client.
+  Converted here: the retention plan, its group descriptions, its per-target reasons, its refusals
+  and its `notCovered` list. Not converted: `privacy.mjs`'s preview wrapper, the deletion vocabulary,
+  `permanentDeletion`, the collection decision's reason and the config validation messages - those
+  still print in Chinese.
 - **The CLI's user-facing text now comes from a catalogue, and one locale governs all of it.** Until
   now the same program printed English in its `Usage:` and error lines while the `note`, `readError`
   and `maskNote` prose inside its JSON output was Chinese, so a single run could mix both languages.

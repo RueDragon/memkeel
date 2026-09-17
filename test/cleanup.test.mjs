@@ -12,6 +12,12 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { CLEANUP_FORMAT, CLEANUP_PROTECTED, executeCleanup, planCleanup } from '../lib/cleanup.mjs';
+import { makeTranslator, renderMessages } from '../lib/messages.mjs';
+
+// The plan and the execution report carry message references rather than sentences, so a test that
+// cares about the wording renders them the way a caller does. The locale is pinned so the assertion
+// does not depend on the machine it runs on.
+const en = makeTranslator('en');
 
 const cli = fileURLToPath(new URL('../memory.mjs', import.meta.url));
 const DAY = 86400000;
@@ -115,8 +121,9 @@ test('retention never proposes anything outside its own two groups', (t) => {
   assert.deepEqual(plan.protected, ['backups/replacements']);
   assert.equal(plan.targets.some((row) => row.relative.includes('replacements')), false);
   // And the scope statement says what is out of reach.
-  assert.ok(plan.notCovered.some((line) => /replacements/.test(line)));
-  assert.ok(plan.notCovered.some((line) => /事件账本/.test(line)));
+  const rendered = renderMessages(plan, en);
+  assert.ok(rendered.notCovered.some((line) => /replacements/.test(line)));
+  assert.ok(rendered.notCovered.some((line) => /event ledger/.test(line)));
 });
 
 test('a home with nothing to prune produces an empty plan', (t) => {
@@ -171,9 +178,10 @@ test('a crafted or stale plan cannot point the deletion somewhere else', (t) => 
   const result = executeCleanup(f.config, plan);
   assert.deepEqual(result.removed, []);
   assert.equal(result.errors.length, 4);
-  assert.ok(result.errors.some((row) => /未知分组/.test(row.message)));
-  assert.ok(result.errors.some((row) => /memory home 之外/.test(row.message)));
-  assert.ok(result.errors.some((row) => /回滚目录/.test(row.message)));
+  const renderedErrors = renderMessages(result, en).errors;
+  assert.ok(renderedErrors.some((row) => /unknown group/.test(row.message)));
+  assert.ok(renderedErrors.some((row) => /outside the memory home/.test(row.message)));
+  assert.ok(renderedErrors.some((row) => /rollback directory/.test(row.message)));
   assert.equal(fs.readFileSync(outside, 'utf8'), 'not mine to delete\n');
   assert.equal(fs.existsSync(path.join(f.policyRoot, 'backups/replacements/keepme.txt')), true);
   assert.equal(fs.existsSync(path.join(f.policyRoot, 'backups/setup-1001')), true, 'a rejected target must survive');

@@ -20,7 +20,7 @@ import { auditDiagnostics, buildDiagnostics, writeDiagnostics } from './lib/diag
 import { initStore } from './lib/init.mjs';
 import { planCodexBackfill, applyCodexBackfill } from './lib/ingest/backfill.mjs';
 import { startServer } from './dashboard.mjs';
-import { makeTranslator } from './lib/messages.mjs';
+import { makeTranslator, renderMessages } from './lib/messages.mjs';
 
 // Every string this CLI prints for a person comes from lib/messages.mjs, so a single locale governs
 // the whole surface; that file explains why it is a separate catalogue from the dashboard's.
@@ -136,11 +136,11 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
     // destructive step is a separate word on the command line rather than a property of the command.
     const plan = planCleanup(loaded);
     if (!options.execute) {
-      console.log(JSON.stringify({ home: policyRoot, ...cleanupPreview(loaded, context), plan }, null, 2));
+      console.log(JSON.stringify(renderMessages({ home: policyRoot, ...cleanupPreview(loaded, context), plan }, t), null, 2));
       if (plan.issues.length) process.exitCode = 1;
     } else {
       const result = executeCleanup(loaded, plan);
-      console.log(JSON.stringify({ home: policyRoot, executedPlan: { at: plan.at, targets: plan.targets.length, bytes: plan.bytes }, ...result }, null, 2));
+      console.log(JSON.stringify(renderMessages({ home: policyRoot, executedPlan: { at: plan.at, targets: plan.targets.length, bytes: plan.bytes }, ...result }, t), null, 2));
       if (result.errors.length) process.exitCode = 1;
     }
   } else if (action === 'export') {

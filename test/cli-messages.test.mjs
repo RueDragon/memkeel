@@ -14,7 +14,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { DEFAULT_LOCALE, LOCALES, MESSAGES, detectLocale, translate } from '../lib/messages.mjs';
+import { DEFAULT_LOCALE, LOCALES, MESSAGES, detectLocale, isMessageReference, msg, renderMessages, translate } from '../lib/messages.mjs';
+import { CLEANUP_GROUPS } from '../lib/cleanup.mjs';
 
 const ROOT = new URL('../', import.meta.url);
 const CLI = fileURLToPath(new URL('memory.mjs', ROOT));
@@ -116,4 +117,34 @@ test('the CLI answers in the language the environment asks for', () => {
 
   const fromLang = run(['config', 'nonsense'], { LANG: 'zh_CN.UTF-8' });
   assert.match(fromLang.stderr, /^用法：/);
+});
+
+// Library code names prose without choosing a language: it emits a message reference and whoever
+// prints it renders that reference in their own locale. These two tests pin the contract in both
+// directions - what counts as a reference, and that a library that drifts back to writing sentences
+// fails here instead of silently leaking one language into another surface.
+test('renderMessages resolves references and leaves anything else alone', () => {
+  const t = (key, params) => translate('en', key, params);
+  const rendered = renderMessages({
+    sentence: msg('cli.cleanup.planNote'),
+    list: [msg('cli.cleanup.keepSetupSnapshots', { keep: 3 })],
+    data: 'untouched',
+    nested: { deep: msg('cli.cleanup.outsideHome') },
+    // A plain object that happens to have a key field is data, not a reference, so the prefix matters.
+    lookalike: { key: 'not-a-cli-key' },
+    count: 7,
+  }, t);
+  assert.match(rendered.sentence, /^Read-only plan: no file was deleted\./);
+  assert.deepEqual(rendered.list, ['keeping the most recent 3 setup snapshots']);
+  assert.equal(rendered.data, 'untouched');
+  assert.equal(rendered.nested.deep, 'the target is outside the memory home');
+  assert.deepEqual(rendered.lookalike, { key: 'not-a-cli-key' });
+  assert.equal(rendered.count, 7);
+});
+
+test('the cleanup plan emits message references rather than sentences', () => {
+  for (const [group, value] of Object.entries(CLEANUP_GROUPS)) {
+    assert.ok(isMessageReference(value), `${group} must be a message reference, not a sentence`);
+    assert.match(value.key, /^cli\.cleanup\.group\./, `${group} must point at a catalogue key`);
+  }
 });
