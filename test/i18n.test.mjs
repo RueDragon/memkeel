@@ -51,10 +51,15 @@ for (const [relative, text] of sources) {
 // Ratchet: the number of hardcoded Chinese literals outside the catalogue, of which the four wire
 // markers in lib/chat.js are exempt data rather than translatable text, so the effective floor is 4
 // and not 0. Lowering this is the remaining UX-01 work — 453 when the ratchet was introduced, then
-// 418, 394, 352, 331, 320, 310, 302, 295, 294, and 293 after the scroll-to-top control — and raising
-// it means a new string was written into a component instead of into the catalogue, which is the
+// 418, 394, 352, 331, 320, 310, 302, 295, 294, 293, and 292 after the chat bubbles — and raising it
+// means a new string was written into a component instead of into the catalogue, which is the
 // regression this guards. The failure message names the largest remaining files.
-const HARDCODED_BUDGET = 293;
+//
+// KNOWN UNDERCOUNT: this counts *quoted* literals, so Chinese sitting in a JSX text node is invisible
+// to it. Converting components/ChatBubbles.jsx moved the count by 1 while it actually removed three
+// pieces of Chinese — two of them were <span>我</span>, bare JSX text. The number below is therefore a
+// floor, not the full remainder, and the same class of text still has to be found by reading.
+const HARDCODED_BUDGET = 292;
 
 test('every locale defines exactly the same keys', () => {
   const expected = Object.keys(MESSAGES[DEFAULT_LOCALE]).sort();
@@ -105,6 +110,7 @@ test('every navigation entry has a label and a description in every locale', () 
 // separates "this screen is translated" from "this screen is translated, and a test says so".
 const CONVERTED = [
   'App.jsx',
+  'components/ChatBubbles.jsx',
   'components/DecisionModal.jsx',
   'components/EditModal.jsx',
   'components/Links.jsx',

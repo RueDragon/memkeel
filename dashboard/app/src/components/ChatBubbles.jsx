@@ -2,6 +2,7 @@ import React from 'react';
 import { Tag } from 'antd';
 import Markdown from './Markdown.jsx';
 import { splitTurnText } from '../lib/chat.js';
+import { useI18n } from '../i18n/index.jsx';
 
 // One checkpoint reads as a real conversation: what the user reported on the right, the
 // unverified agent reply on the left. Shared by 对话回溯, every detail modal and the
@@ -15,6 +16,7 @@ function stamp(value) {
 }
 
 export function ChatExchange({ task, text, request: requestProp, reply: replyProp, host, head }) {
+  const { t } = useI18n();
   const parsed = splitTurnText(text);
   const request = String(requestProp ?? parsed.request ?? '').trim() || String(task ?? '').trim();
   const reply = String(replyProp ?? parsed.reply ?? '').trim();
@@ -27,7 +29,7 @@ export function ChatExchange({ task, text, request: requestProp, reply: replyPro
           <div className="chat-bubble chat-bubble--user chat-bubble--static">
             <Markdown>{request}</Markdown>
           </div>
-          <span className="chat-avatar">我</span>
+          <span className="chat-avatar">{t('chat.you')}</span>
         </div>
       )}
       {reply && (
@@ -44,6 +46,7 @@ export function ChatExchange({ task, text, request: requestProp, reply: replyPro
 
 // Several exchanges (an event's contexts, a session's checkpoints) in one scroll area.
 export function ChatThread({ rows, host }) {
+  const { t } = useI18n();
   const list = Array.isArray(rows) ? rows.filter((row) => row && (row.text || row.task)) : [];
   if (!list.length) return null;
   return (
@@ -56,7 +59,7 @@ export function ChatThread({ rows, host }) {
           host={row.agent || host}
           head={list.length > 1 ? (
             <>
-              <span className="muted">{row.id || stamp(row.occurred_at) || `第 ${i + 1} 段`}</span>
+              <span className="muted">{row.id || stamp(row.occurred_at) || t('chat.segment', { n: i + 1 })}</span>
               {row.certainty && <Tag color="blue">{row.certainty}</Tag>}
               {row.lifecycle && <Tag>{row.lifecycle}</Tag>}
             </>
@@ -70,6 +73,7 @@ export function ChatThread({ rows, host }) {
 // Table-cell variant: the same request/reply split, clamped to two lines per side so a
 // checkpoint row stays scannable instead of wrapping a kilobyte of prompt text.
 export function ChatPreview({ task, text, host }) {
+  const { t } = useI18n();
   const parsed = splitTurnText(text);
   const request = String(parsed.request ?? '').trim() || String(task ?? '').trim();
   const reply = String(parsed.reply ?? '').trim();
@@ -78,7 +82,7 @@ export function ChatPreview({ task, text, host }) {
     <div className="cell-chat">
       {request && (
         <div className="cell-chat-line">
-          <span className="cell-chat-who">我</span>
+          <span className="cell-chat-who">{t('chat.you')}</span>
           <span className="cell-chat-text">{request}</span>
         </div>
       )}
