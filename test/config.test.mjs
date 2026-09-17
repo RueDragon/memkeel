@@ -445,7 +445,14 @@ test('apply refuses to write a migration whose result would be invalid', (t) => 
   // original file must survive untouched.
   write(legacyDocument(complete({ layout: 'not-a-layout' })));
   const before = fs.readFileSync(path.join(home, 'config.json'), 'utf8');
-  assert.throws(() => applyConfigMigration(home), /校验未通过/);
+  assert.throws(() => applyConfigMigration(home), (error) => {
+    assert.match(error.message, /校验未通过/);
+    // The refusal carries the issues themselves as well as the sentence built from them, which is what
+    // lets a caller word them in the reader's own language.
+    assert.ok(Array.isArray(error.issues) && error.issues.length > 0,
+      `the refusal must carry structured issues, got ${JSON.stringify(error.issues)}`);
+    return true;
+  });
   assert.equal(fs.readFileSync(path.join(home, 'config.json'), 'utf8'), before);
   assert.equal(fs.existsSync(path.join(home, 'backups', 'config-migrations')), false, 'nothing was written, so no backup either');
 });

@@ -104,7 +104,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
         applied: outcome.applied, backup: outcome.backup, changes: outcome.changes,
         ...(outcome.applied ? {} : { reason: outcome.reason }) }, null, 2));
     } catch (error) {
-      console.error(t('cli.error.configMigrateApply', { error: error.message }));
+      console.error(t('cli.error.configMigrateApply', { error: Array.isArray(error.issues) ? renderMessages(error.issues, t).join(t('cli.listSep')) : error.message }));
       process.exitCode = 1;
     }
   } else {
