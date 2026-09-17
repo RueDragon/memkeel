@@ -49,10 +49,11 @@ for (const [relative, text] of sources) {
 }
 
 // Ratchet: the number of hardcoded Chinese literals outside the catalogue. Lowering this is the
-// remaining UX-01 work — 453 when the ratchet was introduced, with the application shell converted to
-// zero — and raising it means a new string was written into a component instead of into the catalogue,
-// which is the regression this guards. The failure message names the largest remaining files.
-const HARDCODED_BUDGET = 453;
+// remaining UX-01 work — 453 when the ratchet was introduced, 418 after the first five files were
+// converted — and raising it means a new string was written into a component instead of into the
+// catalogue, which is the regression this guards. The failure message names the largest remaining
+// files.
+const HARDCODED_BUDGET = 418;
 
 test('every locale defines exactly the same keys', () => {
   const expected = Object.keys(MESSAGES[DEFAULT_LOCALE]).sort();
@@ -99,9 +100,23 @@ test('every navigation entry has a label and a description in every locale', () 
   }
 });
 
-test('the application shell carries no hardcoded interface text', () => {
-  assert.equal(counts.get('App.jsx') ?? 0, 0,
-    `App.jsx still contains ${counts.get('App.jsx') ?? 0} hardcoded Chinese literal(s): ${JSON.stringify(chineseLiterals(sources.get('App.jsx')))}`);
+// Files that have been fully converted to the catalogue. This list only grows, and it is what
+// separates "this screen is translated" from "this screen is translated, and a test says so".
+const CONVERTED = [
+  'App.jsx',
+  'views/Conflicts.jsx',
+  'views/Events.jsx',
+  'views/Contexts.jsx',
+  'views/Experiences.jsx',
+];
+
+test('every converted file carries no hardcoded interface text', () => {
+  for (const file of CONVERTED) {
+    const text = sources.get(file);
+    assert.ok(text !== undefined, `${file} is listed as converted but was not found in the app source`);
+    const hits = chineseLiterals(text);
+    assert.equal(hits.length, 0, `${file} still contains hardcoded Chinese: ${JSON.stringify(hits)}`);
+  }
 });
 
 test('hardcoded Chinese outside the catalogue does not exceed its recorded budget', () => {
