@@ -20,7 +20,7 @@ import { auditDiagnostics, buildDiagnostics, writeDiagnostics } from './lib/diag
 import { initStore } from './lib/init.mjs';
 import { planCodexBackfill, applyCodexBackfill } from './lib/ingest/backfill.mjs';
 import { startServer } from './dashboard.mjs';
-import { makeTranslator, renderMessages } from './lib/messages.mjs';
+import { errorText, makeTranslator, renderMessages } from './lib/messages.mjs';
 
 // Every string this CLI prints for a person comes from lib/messages.mjs, so a single locale governs
 // the whole surface; that file explains why it is a separate catalogue from the dashboard's.
@@ -107,7 +107,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
         applied: outcome.applied, backup: outcome.backup, changes: renderMessages(outcome.changes, t),
         ...(outcome.applied ? {} : { reason: renderMessages(outcome.reason, t) }) }, null, 2));
     } catch (error) {
-      console.error(t('cli.error.configMigrateApply', { error: Array.isArray(error.issues) ? renderMessages(error.issues, t).join(t('cli.listSep')) : error.message }));
+      console.error(t('cli.error.configMigrateApply', { error: Array.isArray(error.issues) ? renderMessages(error.issues, t).join(t('cli.listSep')) : errorText(error, t) }));
       process.exitCode = 1;
     }
   } else {

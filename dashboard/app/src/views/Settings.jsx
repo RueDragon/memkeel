@@ -335,7 +335,7 @@ export default function Settings({ reload }) {
       // A refusal carries the issues it was built from as well as a sentence; those render in the
       // reader's language, which the server cannot choose on the page's behalf.
       const issues = Array.isArray(e.issues) ? shared(e.issues) : [];
-      message.error(issues.length ? <>{issues.map((line, i) => <div key={i}>{line}</div>)}</> : shared(e.message));
+      message.error(issues.length ? <>{issues.map((line, i) => <div key={i}>{line}</div>)}</> : shared(e.ref ?? e.message));
     } finally {
       setBusy(false);
     }

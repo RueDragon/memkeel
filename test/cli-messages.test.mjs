@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { DEFAULT_LOCALE, LOCALES, MESSAGES, detectLocale, isMessageReference, msg, renderMessages, translate } from '../lib/messages.mjs';
+import { DEFAULT_LOCALE, LOCALES, MESSAGES, detectLocale, errorText, isMessageReference, makeTranslator, messageError, msg, renderMessages, translate } from '../lib/messages.mjs';
 import { CLEANUP_GROUPS } from '../lib/cleanup.mjs';
 
 const ROOT = new URL('../', import.meta.url);
@@ -150,4 +150,19 @@ test('the cleanup plan emits message references rather than sentences', () => {
     assert.ok(isMessageReference(value), `${group} must be a message reference, not a sentence`);
     assert.match(value.key, /^cli\.cleanup\.group\./, `${group} must point at a catalogue key`);
   }
+});
+
+test('an error carries a readable sentence beside its reference', () => {
+  const error = messageError('cli.config.error.changedAfterPreview');
+  // The string is what a log, or a caller that only reads `message`, sees.
+  assert.equal(error.message, translate(DEFAULT_LOCALE, 'cli.config.error.changedAfterPreview'));
+  assert.ok(isMessageReference(error.ref), JSON.stringify(error.ref));
+  // Two readers: one that has a locale, and one that only has the error.
+  assert.match(errorText(error, makeTranslator('zh-Hans')), /配置文件在预览之后被改动/);
+  assert.match(errorText(error, makeTranslator('en')), /changed after the preview/);
+  // An ordinary error, with no reference attached, still reads back as itself.
+  assert.equal(errorText(new Error('plain failure'), makeTranslator('zh-Hans')), 'plain failure');
+  // The class is preserved, so a `ConfigError` stays one for a caller that cares.
+  class Marker extends Error {}
+  assert.ok(messageError('cli.pref.noPrevious', undefined, Marker) instanceof Marker);
 });

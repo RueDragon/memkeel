@@ -392,7 +392,11 @@ test('revoke-habit refuses a rule that is not backed by an event decision', asyn
   await withServer(loader, async (base) => {
     const res = await post(base, 'revoke-habit/preview', { preferenceId: 'no-such-event-rule' });
     assert.equal(res.status, 500);
-    assert.match((await res.json()).error, /不是事件确认的规则|not found/i);
+    const body = await res.json();
+    assert.match(body.error, /not a rule an event confirmed|not found/i);
+    // When the sentence is the one this page words itself, it travels as a reference beside the
+    // string, so the page can render it in the reader's language instead of the server's.
+    if (/not a rule an event confirmed/i.test(body.error)) assert.match(zh(body.ref), /不是事件确认的规则/);
   });
 });
 
@@ -520,7 +524,9 @@ test('update-config rejects a write when the config file changed after the previ
       action: 'update-config', plan: preview.plan, fingerprint: preview.fingerprint, token: preview.token,
     });
     assert.equal(res.status, 500);
-    assert.match((await res.json()).error, /配置文件在预览之后被改动/);
+    const refusedBody = await res.json();
+    assert.match(refusedBody.error, /changed after the preview/);
+    assert.match(zh(refusedBody.ref), /配置文件在预览之后被改动/);
     assert.equal(readConfigFile(config).vaultName, 'edited-by-hand', 'the hand edit is not overwritten');
   });
 });

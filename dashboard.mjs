@@ -14,6 +14,7 @@ import { learningProjection, retention } from './lib/experience.mjs';
 import { inside } from './lib/transport.mjs';
 import { accessLogSummary, settingsSnapshot } from './lib/dashboard-data.mjs';
 import { AccessLog } from './lib/access-log.mjs';
+import { isMessageReference } from './lib/messages.mjs';
 import { loadSessions, sessionFor } from './lib/sessions.mjs';
 import { loadTranscript } from './lib/transcripts.mjs';
 import { planCloseAction, planHabitDecision, planComposeEvent, executePlan, stateFingerprint, safeStateFingerprint, makeToken, planReviseFact, planReviseLearning, planReviseAction, planRevokeHabit, planUpdateConfig } from './lib/dashboard-actions.mjs';
@@ -47,11 +48,17 @@ function sendJson(res, data, status = 200) {
   res.end(body);
 }
 
-function sendError(res, message, status = 500, issues) {
-  // A refusal may carry the structured issues as well as the sentence the server assembled from them:
-  // the sentence is what a log or a non-UI caller sees, and the issues are what the settings page
-  // renders in the reader's own language.
-  sendJson(res, Array.isArray(issues) && issues.length ? { error: message, issues } : { error: message }, status);
+function sendError(res, error, status = 500) {
+  // `error` is either a sentence (a client mistake) or an Error a handler threw. A thrown error may
+  // carry the structured issues a refusal was built from and a reference for the sentence itself,
+  // so the page can word both in the reader's language; the sentence stays for callers that only
+  // read `error`, and the reference travels as a separate field rather than replacing it.
+  const message = typeof error === 'string' ? error : String(error?.message ?? '');
+  const body = { error: message };
+  const issues = typeof error === 'string' ? null : error.issues;
+  if (Array.isArray(issues) && issues.length) body.issues = issues;
+  if (isMessageReference(error?.ref)) body.ref = error.ref;
+  sendJson(res, body, status);
 }
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json; charset=utf-8' };
@@ -531,7 +538,7 @@ export function createServer(configLoader = loadConfig) {
       }
       serveStatic(res, url.pathname);
     } catch (error) {
-      sendError(res, error.message, 500, error.issues);
+      sendError(res, error, 500);
     }
   });
 }
