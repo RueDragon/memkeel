@@ -31,11 +31,12 @@ const OBSIDIAN_GUIDE = [
   '4. 把「存储后端」改成 `obsidian-cli` 再保存；缺任一项都会被拒绝写入。',
 ].join('\n');
 
-function bindingTag(binding) {
-  if (!binding || !binding.files?.length) return <Tag>无配置文件</Tag>;
-  if (binding.present) return <Tag color="green">已绑定</Tag>;
-  if (binding.unknown) return <Tag color="orange">未知（文件过大，未读取）</Tag>;
-  return <Tag color="red">未绑定</Tag>;
+// The translator is passed in because this is a plain function, not a component, and so has no hook.
+function bindingTag(binding, t) {
+  if (!binding || !binding.files?.length) return <Tag>{t('settings.binding.none')}</Tag>;
+  if (binding.present) return <Tag color="green">{t('settings.binding.bound')}</Tag>;
+  if (binding.unknown) return <Tag color="orange">{t('settings.binding.unknown')}</Tag>;
+  return <Tag color="red">{t('settings.binding.unbound')}</Tag>;
 }
 
 function bindingPaths(host) {
@@ -47,20 +48,21 @@ function bindingPaths(host) {
 // 写入后的重启须知：常驻的 MCP 服务进程只在启动时读一次配置，CLI 与 hook runner 每次调用
 // 都会重新读，所以只有宿主里常驻的那个进程需要重启，页面不会替你重启。
 function RestartNotice({ restart }) {
+  const { t } = useI18n();
   if (!restart) return null;
   return (
     <div>
-      <Alert type="warning" showIcon message="写入配置后，这些常驻进程需要重启才会读到新配置" description={restart.reason} />
+      <Alert type="warning" showIcon message={t('settings.restartNotice')} description={restart.reason} />
       <ul className="settings-restart-list">
-        {restart.processes.map((row) => <li key={row.id}><b>{row.label}</b>：{row.service}</li>)}
+        {restart.processes.map((row) => <li key={row.id}><b>{row.label}</b>{t('punct.labelSeparator')}{row.service}</li>)}
       </ul>
       <div>
-        <span className="muted">重启后再复核一次绑定：</span>{' '}
+        <span className="muted">{t('settings.recheckBinding')}</span>{' '}
         <Text className="mono" copyable={{ text: restart.command }}>{restart.command}</Text>
       </div>
       <div className="muted" style={{ marginTop: 6 }}>{restart.commandHint}</div>
       <div className="muted" style={{ marginTop: 6 }}>
-        CLI 与 hook runner 每次调用都会重新读取配置，不需要重启；重启宿主由你自己决定，本页不会自动重启任何进程。
+        {t('settings.restartExplainer')}
       </div>
     </div>
   );
@@ -343,8 +345,8 @@ export default function Settings({ reload }) {
       width: 110,
       render: (value) => (value ? <Tag color="green">已安装</Tag> : <Tag>未检测到</Tag>),
     },
-    { title: 'MCP 绑定', key: 'mcp', width: 170, render: (_value, row) => bindingTag(row.mcp) },
-    { title: 'hooks 绑定', key: 'hooks', width: 170, render: (_value, row) => bindingTag(row.hooks) },
+    { title: 'MCP 绑定', key: 'mcp', width: 170, render: (_value, row) => bindingTag(row.mcp, t) },
+    { title: 'hooks 绑定', key: 'hooks', width: 170, render: (_value, row) => bindingTag(row.hooks, t) },
     {
       title: '相关配置文件',
       dataIndex: 'dir',
