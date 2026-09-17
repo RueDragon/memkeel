@@ -1,19 +1,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Form, Select, Input, InputNumber, Radio, Alert, App as AntApp } from 'antd';
 import { getComposeOptions, postWrite } from '../lib/api.js';
-
-const KIND_OPTIONS = [
-  { value: 'fact', label: '长期事实' },
-  { value: 'action', label: '待办' },
-  { value: 'context', label: '短期上下文' },
-  { value: 'experience', label: '执行经验' },
-];
+import { useI18n } from '../i18n/index.jsx';
 
 // Composer for brand-new memory records. It never writes on its own: it first asks
 // the server for a validated plan, shows exactly what event will be appended, and
 // only then executes. Evidence is mandatory because every event must cite a source.
 export default function ComposeModal({ open, onClose, onCreated }) {
+  const { t } = useI18n();
   const { message } = AntApp.useApp();
+  const KIND_OPTIONS = [
+    { value: 'fact', label: t('search.kind.fact') },
+    { value: 'action', label: t('kind.actions') },
+    { value: 'context', label: t('search.kind.context') },
+    { value: 'experience', label: t('search.kind.experience') },
+  ];
   const [form] = Form.useForm();
   const [options, setOptions] = useState(null);
   const [kind, setKind] = useState('fact');
@@ -25,9 +26,13 @@ export default function ComposeModal({ open, onClose, onCreated }) {
     }
   }, [open, options, message]);
 
-  const topicOptions = useMemo(() => (options?.topics ?? []).map((t) => ({
-    value: t.id, label: `${t.title}（${t.id}）`,
-  })), [options]);
+  // The map parameter used to be named t, which is this codebase's name for the translator; it is
+  // renamed here, and t joins the dependencies because the label is translated. The label also had
+  // hardcoded full-width brackets, which neither i18n scan can see — brackets are not ideographs, and
+  // a template literal is blanked out before the JSX scan runs — but which look wrong in English.
+  const topicOptions = useMemo(() => (options?.topics ?? []).map((topic) => ({
+    value: topic.id, label: t('compose.topicLabel', { title: topic.title, id: topic.id }),
+  })), [options, t]);
 
   const evidenceOptions = useMemo(() => (options?.evidence ?? []).map((e) => ({
     value: e.path, label: e.path,
@@ -39,15 +44,15 @@ export default function ComposeModal({ open, onClose, onCreated }) {
     try {
       const preview = await postWrite('compose-event/preview', { ...values, kind });
       Modal.confirm({
-        title: '确认新增',
+        title: t('compose.confirmTitle'),
         content: (
           <div>
             <Alert type="info" showIcon message={preview.plan.summary} style={{ marginBottom: 10 }} />
-            <div className="muted">将追加一条不可变事件；不会修改任何既有记录。</div>
+            <div className="muted">{t('compose.appendNote')}</div>
           </div>
         ),
-        okText: '确认写入',
-        cancelText: '取消',
+        okText: t('compose.confirmOk'),
+        cancelText: t('decision.cancel'),
         onOk: async () => {
           await postWrite('execute', {
             action: 'compose-event',
@@ -55,7 +60,7 @@ export default function ComposeModal({ open, onClose, onCreated }) {
             fingerprint: preview.fingerprint,
             token: preview.token,
           });
-          message.success('已新增记录');
+          message.success(t('compose.created'));
           form.resetFields();
           onCreated?.();
           onClose();
@@ -71,11 +76,11 @@ export default function ComposeModal({ open, onClose, onCreated }) {
   return (
     <Modal
       open={open}
-      title="新增记忆"
+      title={t('shell.newMemory')}
       onCancel={onClose}
       onOk={submit}
-      okText="预览写入"
-      cancelText="取消"
+      okText={t('compose.previewOk')}
+      cancelText={t('decision.cancel')}
       confirmLoading={busy}
       width={620}
       destroyOnClose
@@ -84,16 +89,16 @@ export default function ComposeModal({ open, onClose, onCreated }) {
         type="warning"
         showIcon
         style={{ marginBottom: 14 }}
-        message="写入会以追加事件的方式落库，需要引用一条已有笔记作为证据。"
+        message={t('compose.notice')}
       />
       <Form form={form} layout="vertical" initialValues={{ kind: 'fact', ttlDays: 7, certainty: 'reported' }}>
-        <Form.Item label="记录类型" name="kind" required>
+        <Form.Item label={t('field.kind')} name="kind" required>
           <Radio.Group options={KIND_OPTIONS} onChange={(e) => setKind(e.target.value)} optionType="button" />
         </Form.Item>
-        <Form.Item label="主题" name="topic" rules={[{ required: true, message: '请选择主题' }]}>
+        <Form.Item label={t('col.topic')} name="topic" rules={[{ required: true, message: t('compose.topicRequired') }]}>
           <Select
             showSearch
-            placeholder="选择主题"
+            placeholder={t('compose.topicPlaceholder')}
             options={topicOptions}
             loading={!options}
             optionFilterProp="label"
@@ -101,25 +106,25 @@ export default function ComposeModal({ open, onClose, onCreated }) {
         </Form.Item>
 
         {(kind === 'fact') && (
-          <Form.Item label="事实键" name="key" rules={[{ required: true, message: '请输入稳定键名' }]}
-            extra="小写字母、数字、连字符，例如 channel-config-width">
+          <Form.Item label={t('compose.factKey')} name="key" rules={[{ required: true, message: t('compose.factKeyRequired') }]}
+            extra={t('compose.factKeyExtra')}>
             <Input placeholder="stable-key" />
           </Form.Item>
         )}
         {(kind === 'action') && (
-          <Form.Item label="待办 ID（可选）" name="key" extra="留空会按内容自动生成">
+          <Form.Item label={t('compose.actionId')} name="key" extra={t('compose.actionIdExtra')}>
             <Input placeholder="todo-id" />
           </Form.Item>
         )}
         {kind === 'context' && (
           <>
-            <Form.Item label="任务" name="task" rules={[{ required: true, message: '请输入任务名' }]}>
-              <Input placeholder="例如 跨 Agent 记忆系统开源化" />
+            <Form.Item label={t('compose.task')} name="task" rules={[{ required: true, message: t('compose.taskRequired') }]}>
+              <Input placeholder={t('compose.taskPlaceholder')} />
             </Form.Item>
-            <Form.Item label="TTL（天）" name="ttlDays">
+            <Form.Item label={t('compose.ttl')} name="ttlDays">
               <InputNumber min={1} max={90} />
             </Form.Item>
-            <Form.Item label="确定性" name="certainty">
+            <Form.Item label={t('compose.certainty')} name="certainty">
               <Radio.Group optionType="button">
                 <Radio.Button value="reported">reported</Radio.Button>
                 <Radio.Button value="verified">verified</Radio.Button>
@@ -129,31 +134,31 @@ export default function ComposeModal({ open, onClose, onCreated }) {
         )}
         {kind === 'experience' && (
           <>
-            <Form.Item label="触发词" name="triggers" rules={[{ required: true, message: '请输入触发词' }]}
-              extra="逗号分隔，例如 channelconfig, 通道配置">
+            <Form.Item label={t('compose.triggers')} name="triggers" rules={[{ required: true, message: t('compose.triggersRequired') }]}
+              extra={t('compose.triggersExtra')}>
               <Input placeholder="trigger-a, trigger-b" />
             </Form.Item>
-            <Form.Item label="验证方式" name="verification" rules={[{ required: true, message: '请输入验证方式' }]}>
-              <Input placeholder="如何验证这条经验成立" />
+            <Form.Item label={t('compose.verification')} name="verification" rules={[{ required: true, message: t('compose.verificationRequired') }]}>
+              <Input placeholder={t('compose.verificationPlaceholder')} />
             </Form.Item>
-            <Form.Item label="经验子类型" name="scope">
+            <Form.Item label={t('compose.experienceScope')} name="scope">
               <Radio.Group optionType="button" defaultValue="path-finding">
-                <Radio.Button value="path-finding">路径发现</Radio.Button>
-                <Radio.Button value="negative-search">否定搜索</Radio.Button>
+                <Radio.Button value="path-finding">{t('compose.pathFinding')}</Radio.Button>
+                <Radio.Button value="negative-search">{t('compose.negativeSearch')}</Radio.Button>
               </Radio.Group>
             </Form.Item>
           </>
         )}
 
-        <Form.Item label="内容" name="text" rules={[{ required: true, message: '请输入内容' }]}>
-          <Input.TextArea rows={3} placeholder="要记录的结论或上下文" />
+        <Form.Item label={t('field.text')} name="text" rules={[{ required: true, message: t('compose.textRequired') }]}>
+          <Input.TextArea rows={3} placeholder={t('compose.textPlaceholder')} />
         </Form.Item>
-        <Form.Item label="证据笔记" name="evidence" rules={[{ required: true, message: '请选择至少一条证据' }]}
-          extra="事件必须引用一条真实存在的笔记路径">
+        <Form.Item label={t('compose.evidence')} name="evidence" rules={[{ required: true, message: t('compose.evidenceRequired') }]}
+          extra={t('compose.evidenceExtra')}>
           <Select
             mode="multiple"
             showSearch
-            placeholder="选择证据笔记"
+            placeholder={t('compose.evidencePlaceholder')}
             options={evidenceOptions}
             loading={!options}
             optionFilterProp="label"
