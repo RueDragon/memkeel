@@ -1,22 +1,14 @@
 import React, { useState } from 'react';
 import { Modal, Input, Alert, Typography, Button, App as AntApp } from 'antd';
+import { useI18n } from '../i18n/index.jsx';
 
 // Confirmation modal for every write. A raw plan (one status transition plus "a quote is
 // required") is meaningless to a person, so the modal answers three questions in order:
 // what am I deciding on, what happens if I confirm, and what do I have to supply. The
 // preview/execute contract stays visible — nothing runs until this dialog is confirmed.
-const FIELD_LABEL = {
-  status: '状态', text: '内容', scope: '范围', kind: '类型', ttl_days: '保留天数',
-  decision: '决定', lifecycle: '生命周期',
-};
-
-const VALUE_LABEL = {
-  open: '未完成', done: '已完成', active: '进行中', closed: '已关闭',
-  candidate: '候选', probationary: '试用中', confirmed: '已确认', rejected: '已拒绝',
-};
-
-const humanValue = (value) => VALUE_LABEL[String(value)] ?? String(value ?? '—');
-
+//
+// The field and value labels are built inside the component because they are translated, and the
+// enum values they replace are the store's own vocabulary, not interface text.
 function Section({ title, hint, children }) {
   return (
     <section className="decision-section">
@@ -28,9 +20,21 @@ function Section({ title, hint, children }) {
 }
 
 export default function DecisionModal({ decision, onClose }) {
+  const { t } = useI18n();
   const { message } = AntApp.useApp();
   const [quote, setQuote] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const FIELD_LABEL = {
+    status: t('field.status'), text: t('field.text'), scope: t('field.scope'), kind: t('field.kind'),
+    ttl_days: t('field.ttlDays'), decision: t('field.decision'), lifecycle: t('field.lifecycle'),
+  };
+  const VALUE_LABEL = {
+    open: t('value.open'), done: t('value.done'), active: t('value.active'), closed: t('value.closed'),
+    candidate: t('value.candidate'), probationary: t('value.probationary'),
+    confirmed: t('value.confirmed'), rejected: t('value.rejected'),
+  };
+  const humanValue = (value) => VALUE_LABEL[String(value)] ?? String(value ?? '—');
 
   if (!decision) return null;
   const needsQuote = !!decision.needsQuote;
@@ -55,11 +59,11 @@ export default function DecisionModal({ decision, onClose }) {
     <Modal
       open
       width={660}
-      title={decision.title ?? '确认操作'}
+      title={decision.title ?? t('decision.confirmTitle')}
       onCancel={() => { setQuote(''); onClose(); }}
       onOk={submit}
-      okText={decision.okText ?? '确认执行'}
-      cancelText="取消"
+      okText={decision.okText ?? t('decision.confirmOk')}
+      cancelText={t('decision.cancel')}
       confirmLoading={busy}
       okButtonProps={{ disabled: !canSubmit, danger: !!decision.okDanger }}
       destroyOnClose
@@ -67,7 +71,7 @@ export default function DecisionModal({ decision, onClose }) {
       {decision.summary && <Alert type="info" showIcon message={decision.summary} style={{ marginBottom: 14 }} />}
 
       {decision.subject?.text && (
-        <Section title="你要决定的对象">
+        <Section title={t('decision.subject')}>
           <div className="decision-subject">{decision.subject.text}</div>
           {!!decision.subject.meta?.length && (
             <div className="decision-meta">
@@ -80,7 +84,7 @@ export default function DecisionModal({ decision, onClose }) {
       )}
 
       {!!decision.effects?.length && (
-        <Section title="确认后会发生什么">
+        <Section title={t('decision.effects')}>
           <ul className="decision-effects">
             {decision.effects.map((text, i) => <li key={i}>{text}</li>)}
           </ul>
@@ -88,11 +92,11 @@ export default function DecisionModal({ decision, onClose }) {
       )}
 
       {!!decision.changes?.length && (
-        <Section title="将写入的记录">
+        <Section title={t('decision.changes')}>
           <ul className="decision-changes">
             {decision.changes.map((change, i) => (
               <li key={i} className="mono">
-                {FIELD_LABEL[change.field] ?? change.field}：{humanValue(change.from)} → {humanValue(change.to)}
+                {FIELD_LABEL[change.field] ?? change.field}{t('punct.labelSeparator')}{humanValue(change.from)} → {humanValue(change.to)}
               </li>
             ))}
           </ul>
@@ -101,12 +105,12 @@ export default function DecisionModal({ decision, onClose }) {
 
       {needsQuote && (
         <Section
-          title="需要你本人的原话"
-          hint="系统只把你亲口说过的话当作授权：这句话必须逐字出现在下面的证据笔记里，服务端会逐字核对，对不上就拒绝（这是为了防止 agent 自己给自己授权）。"
+          title={t('decision.quoteTitle')}
+          hint={t('decision.quoteHint')}
         >
           {quotes.length > 0 && (
             <>
-              <div className="decision-section-hint">证据笔记里找到这几句可以当授权的原话，点一下即填入：</div>
+              <div className="decision-section-hint">{t('decision.quoteFound')}</div>
               <div className="decision-quotes">
                 {quotes.map((text) => (
                   <Button
@@ -124,23 +128,23 @@ export default function DecisionModal({ decision, onClose }) {
           )}
           {!quotes.length && evidence?.path && (
             <div className="decision-section-hint">
-              没能从证据笔记里自动摘出原话，请打开下面这条笔记，复制你当时说过的那一句。
+              {t('decision.quoteNotFound')}
             </div>
           )}
           {!evidence?.path && (
             <div className="decision-section-hint">
-              原话要逐字出现在该候选来源事件的证据笔记里；路径可在来源事件详情中查看（这条预览没带回来，通常是服务端还没重启）。
+              {t('decision.quoteMissingPath')}
             </div>
           )}
 
           {evidence?.path && (
             <div className="decision-evidence">
               <Typography.Text type="secondary" className="decision-evidence-path">
-                证据笔记：{evidence.path}{evidence.heading ? `#${evidence.heading}` : ''}
+                {t('decision.evidencePath')}{evidence.path}{evidence.heading ? `#${evidence.heading}` : ''}
               </Typography.Text>
               {evidence.section
                 ? <pre className="decision-evidence-body">{evidence.section}</pre>
-                : <div className="muted">这条笔记里没有找到该来源事件的段落，请直接打开上面的笔记查找。</div>}
+                : <div className="muted">{t('decision.evidenceEmpty')}</div>}
             </div>
           )}
 
@@ -148,12 +152,12 @@ export default function DecisionModal({ decision, onClose }) {
             rows={2}
             value={quote}
             onChange={(e) => setQuote(e.target.value)}
-            placeholder="点上面的一句，或原样粘贴你授权该偏好时说的话"
+            placeholder={t('decision.quotePlaceholder')}
             style={{ marginTop: 8 }}
           />
           {!canSubmit && (
             <div className="decision-section-hint decision-section-hint--warn">
-              还不能执行：至少需要 4 个字的原话（当前 {filled} 字）。
+              {t('decision.quoteTooShort', { filled })}
             </div>
           )}
         </Section>
