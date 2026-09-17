@@ -5,24 +5,21 @@ import { getSessions, getDetail, getTranscript } from '../lib/api.js';
 import Markdown from '../components/Markdown.jsx';
 import ScrollToTop from '../components/ScrollToTop.jsx';
 import { splitTurnText } from '../lib/chat.js';
+import { useI18n } from '../i18n/index.jsx';
 
 const HOST_COLOR = { codex: 'blue', zcode: 'geekblue', dsh: 'cyan', claude: 'purple' };
-const STATUS_META = {
-  active: { label: '进行中', color: 'green' },
-  captured: { label: '已入档', color: 'blue' },
-  idle: { label: '空闲', color: 'default' },
-  skipped: { label: '跳过', color: 'orange' },
-};
 
-function ago(iso) {
+// Module-level helpers, so they take a translator instead of reading a hook. The colour table stays
+// module-level because colour is not language; the status labels moved into the component.
+function ago(iso, t) {
   if (!iso) return '';
   const ms = Date.now() - Date.parse(iso);
   if (Number.isNaN(ms)) return '';
   const h = Math.floor(ms / 3.6e6);
-  if (h < 1) return '刚刚';
-  if (h < 24) return `${h} 小时前`;
+  if (h < 1) return t('ago.justNow');
+  if (h < 24) return t('ago.hours', { h });
   const d = Math.floor(h / 24);
-  return `${d} 天前`;
+  return t('ago.days', { d });
 }
 
 function clamp(text, max = 90) {
@@ -33,6 +30,7 @@ function clamp(text, max = 90) {
 // Renders the host's real on-disk conversation. The summary tab shows what the hook
 // archived; this tab shows the source transcript the summary was derived from.
 function TranscriptView({ loading, data }) {
+  const { t } = useI18n();
   if (loading) return <div style={{ padding: 40, textAlign: 'center' }}><Spin /></div>;
   if (!data) return null;
   if (!data.available) {
@@ -40,20 +38,20 @@ function TranscriptView({ loading, data }) {
       <Alert
         type="warning"
         showIcon
-        message="无法读取真实对话记录"
-        description={data.reason || '未知原因'}
+        message={t('sessions.unreadable')}
+        description={data.reason || t('sessions.unknownReason')}
       />
     );
   }
   return (
     <>
       <div className="muted transcript-source">
-        <span>来源文件：{data.source}</span>
-        {data.mtime && <span> · 更新于 {String(data.mtime).replace('T', ' ').slice(0, 19)}</span>}
-        <span> · 共 {data.turns.length} 条消息</span>
+        <span>{t('sessions.source')}{data.source}</span>
+        {data.mtime && <span>{t('sessions.updatedAt', { at: String(data.mtime).replace('T', ' ').slice(0, 19) })}</span>}
+        <span>{t('sessions.messages', { n: data.turns.length })}</span>
       </div>
       {data.turns.length === 0
-        ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该文件没有可展示的对话消息" style={{ padding: 24 }} />
+        ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('sessions.emptyFile')} style={{ padding: 24 }} />
         : (
           <div className="transcript-stream">
             {data.turns.map((t, i) => (
@@ -61,7 +59,7 @@ function TranscriptView({ loading, data }) {
                 {t.role === 'user'
                   ? <>
                       <div className="chat-bubble chat-bubble--user chat-bubble--static"><Markdown>{t.text}</Markdown></div>
-                      <span className="chat-avatar">我</span>
+                      <span className="chat-avatar">{t('chat.you')}</span>
                     </>
                   : <>
                       <span className="chat-avatar chat-avatar--agent">AI</span>
@@ -76,6 +74,13 @@ function TranscriptView({ loading, data }) {
 }
 
 export default function Sessions({ openDetail }) {
+  const { t } = useI18n();
+  const STATUS_META = {
+    active: { label: t('value.active'), color: 'green' },
+    captured: { label: t('session.status.captured'), color: 'blue' },
+    idle: { label: t('session.status.idle'), color: 'default' },
+    skipped: { label: t('session.status.skipped'), color: 'orange' },
+  };
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [host, setHost] = useState('all');
@@ -144,11 +149,11 @@ export default function Sessions({ openDetail }) {
     });
   }, [data, host, keyword]);
 
-  if (error && !data) return <Empty description={`加载失败：${error}`} />;
+  if (error && !data) return <Empty description={t('shell.loadFailed', { error })} />;
   if (!data) return <div style={{ padding: 40, textAlign: 'center' }}><Spin /></div>;
 
   const hostOptions = [
-    { label: '全部', value: 'all' },
+    { label: t('sessions.all'), value: 'all' },
     ...data.hosts.map((h) => ({ label: `${h.id} ${h.sessions}`, value: h.id })),
   ];
 
@@ -167,14 +172,14 @@ export default function Sessions({ openDetail }) {
             <Input
               allowClear
               prefix={<SearchOutlined />}
-              placeholder="搜索任务、回复、工作区…"
+              placeholder={t('sessions.filterPlaceholder')}
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               style={{ marginBottom: 10 }}
             />
             <div className="session-list">
               {filtered.length === 0
-                ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配会话" style={{ padding: 32 }} />
+                ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('sessions.noMatch')} style={{ padding: 32 }} />
                 : filtered.map((row) => {
                     const meta = STATUS_META[row.status] ?? { label: row.status, color: 'default' };
                     return (
@@ -186,17 +191,17 @@ export default function Sessions({ openDetail }) {
                       >
                         <div className="session-item-top">
                           <Tag color={HOST_COLOR[row.host] ?? 'default'}>{row.host}</Tag>
-                          <span className="muted">{row.workspace || '未知工作区'}</span>
+                          <span className="muted">{row.workspace || t('sessions.unknownWorkspace')}</span>
                           <span className="muted session-time">{ago(row.updatedAt)}</span>
                         </div>
-                        <div className="session-item-summary" title="本会话第一条消息">
-                          <span className="session-item-first">开场</span>{clamp(row.summary || row.prompt || '（无任务文本）')}
+                        <div className="session-item-summary" title={t('sessions.firstMessage')}>
+                          <span className="session-item-first">{t('sessions.opening')}</span>{clamp(row.summary || row.prompt || t('sessions.noTaskText'))}
                         </div>
                         <div className="session-item-meta">
                           <Badge color={meta.color} text={meta.label} />
-                          <span>{row.checkpointCount} 个检查点</span>
-                          <span>{row.turn} 轮</span>
-                          {row.failedTools > 0 && <span className="danger-text">{row.failedTools} 次失败</span>}
+                          <span>{t('sessions.checkpoints', { n: row.checkpointCount })}</span>
+                          <span>{t('sessions.turns', { n: row.turn })}</span>
+                          {row.failedTools > 0 && <span className="danger-text">{t('sessions.failed', { n: row.failedTools })}</span>}
                         </div>
                       </button>
                     );
@@ -206,7 +211,7 @@ export default function Sessions({ openDetail }) {
 
           <section className="session-detail" ref={detailRef}>
             {detailLoading ? <div style={{ padding: 40, textAlign: 'center' }}><Spin /></div>
-              : !detail ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择左侧会话查看概要" style={{ padding: 60 }} />
+              : !detail ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('sessions.selectHint')} style={{ padding: 60 }} />
               : (
                 <>
                   <header className="session-detail-head">
@@ -214,7 +219,7 @@ export default function Sessions({ openDetail }) {
                       <Tag color={HOST_COLOR[detail.host] ?? 'default'}>{detail.host}</Tag>
                       <strong>{detail.id}</strong>
                       <Badge color={(STATUS_META[detail.status] ?? {}).color ?? 'default'} text={(STATUS_META[detail.status] ?? {}).label ?? detail.status} />
-                      {detail.readOnly && <Tag color="red">只读</Tag>}
+                      {detail.readOnly && <Tag color="red">{t('sessions.readOnly')}</Tag>}
                     </div>
                     <div className="muted session-detail-sub">
                       <ClockCircleOutlined /> {ago(detail.updatedAt)}
@@ -224,16 +229,16 @@ export default function Sessions({ openDetail }) {
                     </div>
                     {detail.firstTask && (
                       <div className="session-first-task">
-                        <span className="session-first-label">本会话第一条消息</span>
+                        <span className="session-first-label">{t('sessions.firstMessage')}</span>
                         <span>{clamp(detail.firstTask, 240)}</span>
                       </div>
                     )}
                     <div className="session-detail-stats">
-                      <span>{detail.turn} 轮提问</span>
-                      <span>{detail.toolCalls} 次工具调用</span>
-                      <span>{detail.failedTools} 次失败</span>
-                      <span>{(detail.factRecall?.matched?.length ?? 0)} 条事实命中</span>
-                      <span>{detail.turns.length} 个检查点</span>
+                      <span>{t('sessions.turnsAsked', { n: detail.turn })}</span>
+                      <span>{t('sessions.toolCalls', { n: detail.toolCalls })}</span>
+                      <span>{t('sessions.failed', { n: detail.failedTools })}</span>
+                      <span>{t('sessions.factHits', { n: detail.factRecall?.matched?.length ?? 0 })}</span>
+                      <span>{t('sessions.checkpoints', { n: detail.turns.length })}</span>
                     </div>
                   </header>
 
@@ -241,8 +246,8 @@ export default function Sessions({ openDetail }) {
                     activeKey={tab}
                     onChange={setTab}
                     items={[
-                      { key: 'summary', label: '概要记录' },
-                      { key: 'transcript', label: '真实对话' },
+                      { key: 'summary', label: t('sessions.tab.summary') },
+                      { key: 'transcript', label: t('sessions.tab.transcript') },
                     ]}
                     className="session-tabs"
                   />
@@ -251,18 +256,18 @@ export default function Sessions({ openDetail }) {
 
 {detail.prompt && (
   <div className="session-block">
-    <h4>当前任务</h4>
+    <h4>{t('sessions.currentTask')}</h4>
     <div className="chat-row chat-row--user">
       <button type="button" className="chat-bubble chat-bubble--user" onClick={() => openDetail?.('context', detail.id)}>
         <Markdown>{detail.prompt}</Markdown>
       </button>
-      <span className="chat-avatar">我</span>
+      <span className="chat-avatar">{t('chat.you')}</span>
     </div>
   </div>
 )}
 {detail.lastAssistant && (
   <div className="session-block">
-    <h4>最近回复（未复核）</h4>
+    <h4>{t('sessions.lastReply')}</h4>
     <div className="chat-row chat-row--agent">
       <span className="chat-avatar chat-avatar--agent">{detail.host}</span>
       <button type="button" className="chat-bubble chat-bubble--agent" onClick={() => openDetail?.('session', detail.id)}>
@@ -273,15 +278,15 @@ export default function Sessions({ openDetail }) {
 )}
 {detail.routeError && (
   <div className="session-block danger">
-    <h4>工作区路由错误</h4>
+    <h4>{t('sessions.routeError')}</h4>
     <pre className="session-raw">{detail.routeError}</pre>
   </div>
 )}
 
 <div className="session-turns">
-  <h4>自动检查点回溯（按时间正序，最新在最下）</h4>
+  <h4>{t('sessions.checkpointHistory')}</h4>
   {detail.turns.length === 0
-    ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该会话还没有入档检查点" style={{ padding: 24 }} />
+    ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('sessions.noCheckpoints')} style={{ padding: 24 }} />
     : detail.turns.map((turn) => {
         const parsed = splitTurnText(turn.text);
         const request = turn.task || parsed.request;
@@ -292,14 +297,14 @@ export default function Sessions({ openDetail }) {
               <span className="muted">{String(turn.occurred_at).replace('T', ' ').slice(0, 19)}</span>
               <Tag color="blue">{turn.certainty || 'reported'}</Tag>
               {turn.lifecycle && <Tag>{turn.lifecycle}</Tag>}
-              {turn.supersedes && <Tooltip title={`替代 ${turn.supersedes}`}><Tag color="orange">替代</Tag></Tooltip>}
+              {turn.supersedes && <Tooltip title={t('sessions.supersedeTitle', { id: turn.supersedes })}><Tag color="orange">{t('sessions.supersedeTag')}</Tag></Tooltip>}
             </div>
             {request && (
               <div className="chat-row chat-row--user">
                 <button type="button" className="chat-bubble chat-bubble--user" onClick={() => openDetail?.('event', turn.event_id)}>
                   <Markdown>{request}</Markdown>
                 </button>
-                <span className="chat-avatar">我</span>
+                <span className="chat-avatar">{t('chat.you')}</span>
               </div>
             )}
             {reply && (
@@ -316,7 +321,7 @@ export default function Sessions({ openDetail }) {
 </div>
                   {detail.observations.length > 0 && (
                     <div className="session-block">
-                      <h4>最近工具观察</h4>
+                      <h4>{t('sessions.recentTools')}</h4>
                       <div className="session-tools">
                         {detail.observations.slice(-12).reverse().map((row, i) => (
                           <Tag key={i} color={row.failed ? 'red' : 'default'}>{row.tool}</Tag>
