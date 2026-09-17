@@ -36,6 +36,33 @@ function walk(dir, prefix = '') {
 const files = walk(APP_SRC);
 const sources = new Map(files.map((file) => [file.relative, fs.readFileSync(file.url, 'utf8')]));
 
+// A hook value that is used but never destructured does not fail the build: the identifier is simply
+// undefined at run time, and React unmounts the whole page with
+// `ReferenceError: shared is not defined`. Nothing else catches it - the counters below look for
+// Chinese, the bundler does not resolve free identifiers, and no test renders these components - so
+// it is checked here, and per component: a component that destructures `shared` must not vouch for
+// the next one that does not. `t` is deliberately not checked, because helpers in these files take
+// it as an ordinary parameter (`bindingTag(binding, t)`); `shared` never is.
+test('a component that renders a reference destructures it from the hook', () => {
+  const HOOK_VALUES = ['shared', 'locale', 'setLocale'];
+  const strip = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const problems = [];
+  for (const [relative, source] of sources) {
+    // Split at top-level declarations, so each chunk is one component's own body.
+    const chunks = strip(source).split(/^(?=(?:export\s+default\s+)?function\s|const\s+[A-Z][A-Za-z0-9_$]*\s*=)/m);
+    for (const chunk of chunks) {
+      const hook = chunk.match(/const\s*\{([^}]*)\}\s*=\s*useI18n\(\)/);
+      const have = new Set(hook ? hook[1].split(',').map((name) => name.trim().split(':').pop().trim()) : []);
+      for (const value of HOOK_VALUES) {
+        if (!new RegExp(`\\b${value}\\s*\\(`).test(chunk) || have.has(value)) continue;
+        const name = chunk.match(/function\s+([A-Za-z0-9_$]+)/)?.[1] ?? '(module scope)';
+        problems.push(`${relative}: ${name} uses ${value}() but does not destructure it from useI18n()`);
+      }
+    }
+  }
+  assert.deepEqual(problems, []);
+});
+
 function chineseLiterals(text) {
   return text.match(CHINESE_LITERAL) ?? [];
 }

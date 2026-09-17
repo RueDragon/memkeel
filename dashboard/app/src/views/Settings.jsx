@@ -260,7 +260,7 @@ function CollectionPolicy({ collection }) {
 }
 
 export default function Settings({ reload }) {
-  const { t } = useI18n();
+  const { t, shared } = useI18n();
   const { message } = AntApp.useApp();
   const [form] = Form.useForm();
   const [settings, setSettings] = useState(null);
