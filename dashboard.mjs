@@ -47,8 +47,11 @@ function sendJson(res, data, status = 200) {
   res.end(body);
 }
 
-function sendError(res, message, status = 500) {
-  sendJson(res, { error: message }, status);
+function sendError(res, message, status = 500, issues) {
+  // A refusal may carry the structured issues as well as the sentence the server assembled from them:
+  // the sentence is what a log or a non-UI caller sees, and the issues are what the settings page
+  // renders in the reader's own language.
+  sendJson(res, Array.isArray(issues) && issues.length ? { error: message, issues } : { error: message }, status);
 }
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json; charset=utf-8' };
@@ -528,7 +531,7 @@ export function createServer(configLoader = loadConfig) {
       }
       serveStatic(res, url.pathname);
     } catch (error) {
-      sendError(res, error.message, 500);
+      sendError(res, error.message, 500, error.issues);
     }
   });
 }

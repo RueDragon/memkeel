@@ -8,7 +8,11 @@ async function jsonFetch(url, options) {
   try { body = text ? JSON.parse(text) : null; } catch { /* non-JSON error page */ }
   if (!res.ok) {
     const message = body?.error || `HTTP ${res.status}`;
-    throw new Error(message);
+    const error = new Error(message);
+    // A refusal may carry structured issues beside the sentence the server assembled from them, so a
+    // caller that renders text in the reader's language is not forced to show the server's wording.
+    if (Array.isArray(body?.issues) && body.issues.length) error.issues = body.issues;
+    throw error;
   }
   return body;
 }

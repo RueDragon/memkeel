@@ -513,7 +513,12 @@ test('update-config refuses a role that points outside the memory root', async (
         roles: { ...rolesOf(config), eventsRoot: escape },
       }));
       assert.equal(res.status, 500, `role ${escape} must be refused`);
-      assert.match((await res.json()).error, /roles\.eventsRoot.*记忆库根目录内/);
+      const refused = await res.json();
+      assert.match(refused.error, /roles\.eventsRoot.*记忆库根目录内/);
+      // The refusal carries the issues themselves beside the sentence assembled from them, which is
+      // what lets the settings page word them in the reader's own language.
+      assert.ok(Array.isArray(refused.issues) && refused.issues.some((line) => /roles\.eventsRoot/.test(line)),
+        `the refusal must carry structured issues, got ${JSON.stringify(refused.issues)}`);
     }
   });
 });
@@ -524,7 +529,10 @@ test('update-config refuses numeric parameters outside their allowed range', asy
     const config = loader();
     const zero = await post(base, 'update-config/preview', configPayload(config, { activeLimit: 0 }));
     assert.equal(zero.status, 500);
-    assert.match((await zero.json()).error, /activeLimit.*必须是 1 到 200 之间的整数/);
+    const refusedZero = await zero.json();
+    assert.match(refusedZero.error, /activeLimit.*必须是 1 到 200 之间的整数/);
+    assert.ok(Array.isArray(refusedZero.issues) && refusedZero.issues.some((line) => /activeLimit/.test(line)),
+      `the refusal must carry structured issues, got ${JSON.stringify(refusedZero.issues)}`);
 
     const fractional = await post(base, 'update-config/preview', configPayload(config, { budgetBytes: 12.5 }));
     assert.equal(fractional.status, 500);
