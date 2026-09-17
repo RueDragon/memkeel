@@ -135,6 +135,49 @@ test('every converted file carries no hardcoded interface text', () => {
   }
 });
 
+// KNOWN UNDERCOUNT, now closed: the literal scan above matches *quoted* literals, so Chinese sitting
+// in a JSX text node was invisible to it. Converting components/ChatBubbles.jsx moved that count by 1
+// while it actually removed three pieces of Chinese, two of which were <span>我</span>, bare JSX text.
+//
+// This second scan covers exactly the complement: comments are stripped, then quoted and template
+// literals are blanked out, and whatever Chinese is left is text the interface renders directly. The
+// two scans therefore partition the file rather than overlapping, and together they measure the real
+// remainder instead of a floor.
+const QUOTED_LITERAL = /(['"`])(?:\\.|(?!\1)[^\\])*\1/g;
+
+function jsxTextChinese(text) {
+  return stripComments(text).replace(QUOTED_LITERAL, ' ').match(/[\u4e00-\u9fff]/g) ?? [];
+}
+
+const jsxCounts = new Map();
+let jsxTotal = 0;
+for (const [relative, text] of sources) {
+  const hits = jsxTextChinese(text).length;
+  if (hits) jsxCounts.set(relative, hits);
+  jsxTotal += hits;
+}
+
+test('every converted file is free of Chinese in JSX text', () => {
+  for (const file of CONVERTED) {
+    const hits = jsxTextChinese(sources.get(file) ?? '').length;
+    assert.equal(hits, 0,
+      `${file} renders ${hits} Chinese character(s) directly as JSX text: ${JSON.stringify(jsxTextChinese(sources.get(file) ?? ''))}`);
+  }
+});
+
+// The budget for the complement scan. Measured when the scan was introduced: 1138 characters, and
+// never raised. That number is the honest scale of what is left, and it is far larger than the
+// literal count above suggested — views/Settings.jsx alone renders 814 characters of Chinese prose
+// directly as JSX text while holding only 70 quoted literals, so the remaining work is dominated by
+// paragraphs written inline, not by short labels. Every converted file already measures zero here.
+const JSX_TEXT_BUDGET = 1138;
+
+test('Chinese rendered as JSX text outside the catalogue does not exceed its recorded budget', () => {
+  const worst = [...jsxCounts].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([file, n]) => `${file}:${n}`);
+  assert.ok(jsxTotal <= JSX_TEXT_BUDGET,
+    `Chinese characters rendered as JSX text outside the catalogue: ${jsxTotal} (budget ${JSX_TEXT_BUDGET}). Largest: ${worst.join(', ')}`);
+});
+
 // The literal scan above only recognises CJK ideographs (U+4E00-U+9FFF), so it cannot see full-width
 // punctuation sitting in a JSX text node — which is exactly how a full-width colon survived into the
 // English interface until it was noticed by hand, and why that fix went in without a failing test.
