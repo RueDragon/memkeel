@@ -11,12 +11,14 @@ import { ensureWorkspace, record, loadEvents, reduceEvents } from '../lib/core.m
 import { makeToken, verifyToken, planCloseAction, stateFingerprint } from '../lib/dashboard-actions.mjs';
 import { readManualHabits, preferenceProjection } from '../lib/preferences.mjs';
 import { inside } from '../lib/transport.mjs';
-import { makeTranslator, renderMessages } from '../lib/messages.mjs';
+import { isMessageReference, makeTranslator, renderMessages } from '../lib/messages.mjs';
 
 // A refusal carries the issues it was built from rather than a sentence, so an assertion about
 // wording renders them the way the settings page does. The locale is pinned for determinism.
 const zhT = makeTranslator('zh-Hans');
+const enT = makeTranslator('en');
 const zh = (value) => renderMessages(value, zhT);
+const en = (value) => renderMessages(value, enT);
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-write-'));
@@ -186,6 +188,19 @@ test('a token signed with another secret is refused', async (t) => {
   const plan = planCloseAction(config, reduceEvents(events), { topic: config.topics[0].id, actionId: 'todo-one' });
   const forged = makeToken({ ...config, dashboardTokenSecret: 'other' }, { action: 'close-action', plan, fingerprint: stateFingerprint(config, events) });
   assert.throws(() => verifyToken(config, forged), /signature mismatch/);
+});
+
+test('a plan summary travels as a reference that the dialog renders', async (t) => {
+  const { loader } = fixture(t);
+  const config = loader();
+  const plan = planCloseAction(config, reduceEvents(loadEvents(config)), { topic: config.topics[0].id, actionId: 'todo-one' });
+  // A plan summary is shown in the confirmation dialog and is never written to the ledger, so it is
+  // a reference: a plain string here would be a hardcoded language again and the dialog would have
+  // nothing to render. Both halves are pinned - that it is a reference, and that it resolves in
+  // either language.
+  assert.ok(isMessageReference(plan.summary), JSON.stringify(plan.summary));
+  assert.match(zh(plan.summary), /^关闭待办：/);
+  assert.match(en(plan.summary), /^Close action: /);
 });
 
 test('habit rejection needs no quote, confirmation does', async (t) => {
