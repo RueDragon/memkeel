@@ -73,6 +73,22 @@ test('ambiguous managed blocks fail closed', (t) => {
   assert.throws(() => transport.managed('bad.md', '', 'replace'), /exactly one/);
 });
 
+test('content that quotes the managed markers cannot forge a second block', (t) => {
+  const { config, transport } = fixture(t);
+  const file = path.join(config.vaultRoot, 'forged.md');
+  fs.writeFileSync(file, 'manual\n<!-- AUTO-MANAGED:START -->\nold\n<!-- AUTO-MANAGED:END -->\n');
+  // Event bodies, fact text and evidence lists are arbitrary text, so one of them can quote the
+  // markers themselves - which is how a live store was deadlocked on 2026-09-17.
+  transport.managed('forged.md', '', 'a note must hold <!-- AUTO-MANAGED:START --> / <!-- AUTO-MANAGED:END --> exactly once');
+  const after = fs.readFileSync(file, 'utf8');
+  assert.equal(after.split('<!-- AUTO-MANAGED:START -->').length - 1, 1, 'the content forged a second start marker');
+  assert.equal(after.split('<!-- AUTO-MANAGED:END -->').length - 1, 1, 'the content forged a second end marker');
+  assert.match(after, /&lt;!-- AUTO-MANAGED:START --&gt;/, 'the quoted marker is kept, escaped rather than dropped');
+  // The damage is not the stray marker, it is that every later write refuses for good.
+  transport.managed('forged.md', '', 'second write');
+  assert.match(fs.readFileSync(file, 'utf8'), /second write/);
+});
+
 test('CLI diagnostics preserve non-empty stdout when stderr is empty', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lu-memory-cli-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
