@@ -51,10 +51,10 @@ for (const [relative, text] of sources) {
 // Ratchet: the number of hardcoded Chinese literals outside the catalogue, of which the four wire
 // markers in lib/chat.js are exempt data rather than translatable text, so the effective floor is 4
 // and not 0. Lowering this is the remaining UX-01 work — 453 when the ratchet was introduced, then
-// 418, 394, 352, 331, 320, 310, 302, 295, and 294 after the shared link primitives — and raising it
-// means a new string was written into a component instead of into the catalogue, which is the
+// 418, 394, 352, 331, 320, 310, 302, 295, 294, and 293 after the scroll-to-top control — and raising
+// it means a new string was written into a component instead of into the catalogue, which is the
 // regression this guards. The failure message names the largest remaining files.
-const HARDCODED_BUDGET = 294;
+const HARDCODED_BUDGET = 293;
 
 test('every locale defines exactly the same keys', () => {
   const expected = Object.keys(MESSAGES[DEFAULT_LOCALE]).sort();
@@ -108,6 +108,7 @@ const CONVERTED = [
   'components/DecisionModal.jsx',
   'components/EditModal.jsx',
   'components/Links.jsx',
+  'components/ScrollToTop.jsx',
   'components/SearchPalette.jsx',
   'lib/events.js',
   'views/Actions.jsx',
