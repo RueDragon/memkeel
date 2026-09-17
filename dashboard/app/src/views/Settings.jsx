@@ -41,10 +41,10 @@ function bindingTag(binding, t) {
   return <Tag color="red">{t('settings.binding.unbound')}</Tag>;
 }
 
-function bindingPaths(host) {
+function bindingPaths(host, t) {
   const files = [...(host.mcp?.files ?? []), ...(host.hooks?.files ?? [])];
   const paths = [...new Set(files.map((row) => row.path))];
-  return paths.length ? paths.join('、') : host.dir;
+  return paths.length ? paths.join(t('settings.listSep')) : host.dir;
 }
 
 // 写入后的重启须知：常驻的 MCP 服务进程只在启动时读一次配置，CLI 与 hook runner 每次调用
@@ -365,7 +365,7 @@ export default function Settings({ reload }) {
     {
       title: t('settings.host.col.files'),
       dataIndex: 'dir',
-      render: (_value, row) => <span className="mono muted">{bindingPaths(row)}</span>,
+      render: (_value, row) => <span className="mono muted">{bindingPaths(row, t)}</span>,
     },
   ];
 
@@ -420,7 +420,7 @@ export default function Settings({ reload }) {
         </div>
       )}
       <div className="panel">
-        <h3 className="panel-title">配置文件</h3>
+        <h3 className="panel-title">{t('settings.config.title')}</h3>
         <div>
           <Descriptions
             column={1}
@@ -451,7 +451,7 @@ export default function Settings({ reload }) {
                 key: 'preserved',
                 label: t('settings.unchangedKeysTitle'),
                 children: settings.preservedKeys?.length
-                  ? <span className="mono muted">{settings.preservedKeys.join(t('settings.config.listSep'))}</span>
+                  ? <span className="mono muted">{settings.preservedKeys.join(t('settings.listSep'))}</span>
                   : <span className="muted">{t('settings.config.none')}</span>,
               },
             ]}
@@ -605,13 +605,13 @@ export default function Settings({ reload }) {
       </div>
 
       <div className="settings-actions">
-        <Button type="primary" icon={<SaveOutlined />} htmlType="submit" loading={busy}>预览并保存</Button>
-        <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>重新读取</Button>
-        <span className="muted">保存前先给你看将要改动的字段，确认后才写入磁盘。</span>
+        <Button type="primary" icon={<SaveOutlined />} htmlType="submit" loading={busy}>{t('settings.actions.preview')}</Button>
+        <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>{t('settings.actions.reload')}</Button>
+        <span className="muted">{t('settings.actions.hint')}</span>
       </div>
 
       <div className="panel">
-        <h3 className="panel-title">宿主绑定状态（只读）</h3>
+        <h3 className="panel-title">{t('settings.hosts.title')}</h3>
         <div>
           <Alert type="info" showIcon style={{ marginBottom: 12 }} message={settings.setup.note} />
           <DataTable
@@ -622,19 +622,19 @@ export default function Settings({ reload }) {
             pageSize={10}
             scrollY={240}
           />
-          <Divider plain style={{ margin: '12px 0' }}>等价命令（复制到终端执行）</Divider>
+          <Divider plain style={{ margin: '12px 0' }}>{t('settings.hosts.commands')}</Divider>
           <Space direction="vertical" size={4}>
             <div>
-              <span className="muted">绑定 / 重新绑定：</span>{' '}
+              <span className="muted">{t('settings.hosts.bind')}</span>{' '}
               <Text className="mono" copyable={{ text: settings.setup.apply }}>{settings.setup.apply}</Text>{' '}
-              <span className="muted">（从源码目录直接跑：{settings.setup.checkoutFallback}）</span>
+              <span className="muted">{t('settings.hosts.checkoutFallback', { path: settings.setup.checkoutFallback })}</span>
             </div>
             <div>
-              <span className="muted">只读复核：</span>{' '}
+              <span className="muted">{t('settings.hosts.review')}</span>{' '}
               <Text className="mono" copyable={{ text: settings.setup.check }}>{settings.setup.check}</Text>
             </div>
             <div>
-              <span className="muted">先看会改什么：</span>{' '}
+              <span className="muted">{t('settings.hosts.dryRun')}</span>{' '}
               <Text className="mono" copyable={{ text: settings.setup.dryRun }}>{settings.setup.dryRun}</Text>
             </div>
           </Space>
@@ -642,7 +642,7 @@ export default function Settings({ reload }) {
       </div>
 
       <div className="panel" style={{ marginTop: 12 }}>
-        <h3 className="panel-title">写入后需要重启的进程</h3>
+        <h3 className="panel-title">{t('settings.restart.title')}</h3>
         <div>
           <RestartNotice restart={settings.restart} />
         </div>

@@ -141,6 +141,7 @@ const CONVERTED = [
   'views/Habits.jsx',
   'views/Overview.jsx',
   'views/Reference.jsx',
+  'views/Settings.jsx',
 ];
 
 test('every converted file carries no hardcoded interface text', () => {
@@ -183,11 +184,12 @@ test('every converted file is free of Chinese in JSX text', () => {
 });
 
 // The budget for the complement scan. Measured when the scan was introduced: 1138 characters, and
-// never raised. That number is the honest scale of what is left, and it is far larger than the
-// literal count above suggested — views/Settings.jsx alone renders 814 characters of Chinese prose
-// directly as JSX text while holding only 70 quoted literals, so the remaining work is dominated by
-// paragraphs written inline, not by short labels. Every converted file already measures zero here.
-const JSX_TEXT_BUDGET = 88;
+// never raised. That number was the honest scale of what was left, and it was far larger than the
+// literal count above suggested — views/Settings.jsx alone rendered 814 characters of Chinese prose
+// directly as JSX text while holding only 70 quoted literals, so the remaining work was dominated by
+// paragraphs written inline, not by short labels. The last page came in with this change, so the
+// budget is now zero: no file in the app source renders Chinese as JSX text any more.
+const JSX_TEXT_BUDGET = 0;
 
 test('Chinese rendered as JSX text outside the catalogue does not exceed its recorded budget', () => {
   const worst = [...jsxCounts].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([file, n]) => `${file}:${n}`);
