@@ -130,7 +130,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
     workspace: typeof options.workspace === 'string' ? options.workspace : undefined,
     cwd: typeof options.cwd === 'string' ? options.cwd : undefined,
   };
-  if (action === 'show') console.log(JSON.stringify({ home: policyRoot, ...privacyView(loaded, context) }, null, 2));
+  if (action === 'show') console.log(JSON.stringify(renderMessages({ home: policyRoot, ...privacyView(loaded, context) }, t), null, 2));
   else if (action === 'cleanup') {
     // Preview by default, like `restore --execute`: the plan names every path it would remove, so the
     // destructive step is a separate word on the command line rather than a property of the command.
@@ -145,7 +145,10 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
     }
   } else if (action === 'export') {
     if (options.out === true || typeof options.out !== 'string') { console.error(t('cli.error.privacyExportNeedsOut')); process.exit(2); }
-    const bundle = buildDiagnostics(loaded, { version: VERSION });
+    // Rendered before it is audited and written: this bundle is a readable artifact for a person, so
+    // a message reference must never reach the file. Auditing the rendered bytes is also the stronger
+    // check, because those are the bytes that leave.
+    const bundle = renderMessages(buildDiagnostics(loaded, { version: VERSION }), t);
     // Audit the real bytes before they are written, not after: an export that promises to be free of
     // paths and credentials should be checked against what it actually contains, and a failed check
     // must leave nothing behind.

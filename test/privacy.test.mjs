@@ -139,7 +139,7 @@ test('the effective policy says which scope decided, and states the limit of phy
   assert.deepEqual(view.vocabulary.map((row) => row.state), DELETION_VOCABULARY.map((row) => row.state));
   // The unsupported state is marked unsupported in the payload, not only in prose.
   assert.equal(view.vocabulary.find((row) => row.state === 'physically-deleted').supported, false);
-  assert.match(view.permanentDeletion, /物理删除未实现/);
+  assert.match(renderMessages(view, en).permanentDeletion, /Physical deletion is not implemented/);
 });
 
 test('a cleanup preview deletes nothing and lists what it does not cover', () => {

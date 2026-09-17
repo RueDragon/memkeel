@@ -9,6 +9,11 @@ import { createTransport } from '../lib/storage/index.mjs';
 import { ensureWorkspace, record } from '../lib/core.mjs';
 import { settingsSnapshot } from '../lib/dashboard-data.mjs';
 import { privacyView } from '../lib/privacy.mjs';
+import { makeTranslator, renderMessages } from '../lib/messages.mjs';
+
+// Payloads carry message references for the prose that originates in lib/, so a test that reads that
+// prose renders it the way the settings page does. The locale is pinned for determinism.
+const en = makeTranslator('en');
 
 // Builds a small isolated vault + policy root and returns a config loader plus the
 // project directory, so dashboard tests never touch the real vault.
@@ -211,7 +216,7 @@ test('the settings payload reports the effective collection policy instead of of
   // The three states travel with the payload, including the one that is not offered.
   assert.deepEqual(snapshot.collection.vocabulary.map((row) => row.state), ['not-collected', 'retained-not-retrieved', 'physically-deleted']);
   assert.equal(snapshot.collection.vocabulary.find((row) => row.state === 'physically-deleted').supported, false);
-  assert.match(snapshot.collection.permanentDeletion, /物理删除未实现/);
+  assert.match(renderMessages(snapshot.collection, en).permanentDeletion, /Physical deletion is not implemented/);
 });
 
 test('the settings payload says which fields the file sets and which are the program fallback', (t) => {

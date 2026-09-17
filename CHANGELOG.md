@@ -9,6 +9,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The collection policy panel renders library prose in the reader's language.** `privacy.mjs` emitted
+  the deletion vocabulary, the reason behind a collection decision and the `permanentDeletion`
+  explanation as Chinese sentences, so the settings page showed Chinese in English and the CLI showed
+  Chinese next to English error lines. Those fields now travel as message references, and the settings
+  page renders them through the same catalogue the CLI uses, so one reference cannot be worded two
+  ways. The diagnostics export renders the bundle before it is audited and written, because that
+  artifact is read by a person and a reference must never reach the file. With this, `lib/privacy.mjs`
+  and `lib/cleanup.mjs` hold no Chinese outside comments, and `memkeel privacy show|cleanup|exclusions`
+  print none in English. The dashboard imports `lib/messages.mjs` across its app root on purpose: the
+  bundle carries its own copy, so nothing is fetched at runtime.
 - **The privacy previews emit message references too.** `privacy.mjs`'s `cleanupPreview` and
   `previewExclusions` built their scope rows, their notCovered lists and their notes out of Chinese
   sentences, so `memkeel privacy cleanup` and `memkeel privacy exclusions` printed English error

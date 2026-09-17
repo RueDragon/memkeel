@@ -174,7 +174,7 @@ function ProvenanceList({ settings }) {
 // 由哪一层决定的」，而不是给一个看起来像开关、实际只管渲染的控件。数据来自后端的 privacyView()，
 // 与 `memkeel privacy show` 打印的是同一个函数，两边不可能说法不一致。
 function CollectionPolicy({ collection }) {
-  const { t } = useI18n();
+  const { t, shared } = useI18n();
   if (!collection) return null;
   const decision = collection.decision ?? {};
   const scopes = collection.scopes ?? {};
@@ -195,7 +195,7 @@ function CollectionPolicy({ collection }) {
           : (decision.collecting ? t('settings.coll.defaultOn') : t('settings.coll.defaultOff'))}
         description={(
           <div>
-            <div>{decision.reason}</div>
+            <div>{shared(decision.reason)}</div>
             <div className="muted" style={{ marginTop: 4 }}>
               {t('settings.coll.decidedBy', { layer: decision.decidedBy })}
             </div>
@@ -238,14 +238,14 @@ function CollectionPolicy({ collection }) {
       />
       <Divider plain style={{ margin: '10px 0' }}>{t('settings.coll.deleteDivider')}</Divider>
       <ul className="settings-paths">
-        {(collection.vocabulary ?? []).map((row) => (
+        {shared(collection.vocabulary ?? []).map((row) => (
           <li key={row.state}>
             <Tag color={row.supported ? 'green' : 'default'}>{row.supported ? t('settings.coll.provided') : t('settings.coll.notProvided')}</Tag>
             <b>{row.label}</b>{t('punct.labelSeparator')}{row.meaning}
           </li>
         ))}
       </ul>
-      <div className="muted" style={{ marginTop: 8 }}>{collection.permanentDeletion}</div>
+      <div className="muted" style={{ marginTop: 8 }}>{shared(collection.permanentDeletion)}</div>
       <div className="muted" style={{ marginTop: 8 }}>
         {t('settings.coll.readOnlyNote1')}
         <Text className="mono">collection</Text>

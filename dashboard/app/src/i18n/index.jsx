@@ -1,5 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { LOCALES, STORAGE_KEY, detectLocale, translate } from './messages.js';
+// The catalogue lib/ writes its message references into. It is imported from outside this app on
+// purpose: the same reference has to render identically here and in the CLI, and the published
+// dashboard bundle carries its own copy of this module, so nothing is fetched at runtime.
+import { renderMessages, translate as translateShared } from '../../../../lib/messages.mjs';
 
 const I18nContext = createContext(null);
 
@@ -32,7 +36,16 @@ export function I18nProvider({ children }) {
   }, [locale]);
 
   const value = useMemo(
-    () => ({ locale, setLocale, t: (key, params) => translate(locale, key, params) }),
+    () => ({
+      locale,
+      setLocale,
+      t: (key, params) => translate(locale, key, params),
+      // Some of what this page shows originates in lib/ as a message reference rather than a sentence,
+      // because the server that builds the payload cannot know which language this client is showing.
+      // It is rendered here, in the same locale, out of the catalogue those references were written
+      // against.
+      shared: (input) => renderMessages(input, (key, params) => translateShared(locale, key, params)),
+    }),
     [locale, setLocale],
   );
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
