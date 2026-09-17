@@ -126,12 +126,13 @@ function ObsidianGuide({ obsidian }) {
 // 来源由后端 provenance 给出，页面不自己判断，也不在这里编造默认值（若干回退是散文式描述而非单一字面量，
 // 在下游再写一份数字就会和校验器形成第二个真相源）。
 function ProvenanceList({ settings }) {
+  const { t } = useI18n();
   const provenance = settings?.provenance;
   if (!provenance) return null;
   const rows = [
     ...['storage', 'memoryRoot', 'vaultRoot', 'vaultName', 'obsidianCli', 'layout'].map((key) => [key, key]),
-    ...(settings.numberFields ?? []).map((field) => [field.key, `${field.key}（${field.label}）`]),
-    ...(settings.roleFields ?? []).map((field) => [`roles.${field.key}`, `${field.key}（${field.label}）`]),
+    ...(settings.numberFields ?? []).map((field) => [field.key, t('settings.provFieldLabel', { key: field.key, label: field.label })]),
+    ...(settings.roleFields ?? []).map((field) => [`roles.${field.key}`, t('settings.provFieldLabel', { key: field.key, label: field.label })]),
   ];
   const valueOf = (key) => (key.startsWith('roles.')
     ? settings.groups?.roles?.[key.slice('roles.'.length)]
@@ -139,14 +140,17 @@ function ProvenanceList({ settings }) {
   return (
     <div>
       <div className="muted">
-        上面各字段显示的是程序此刻解析出来的生效值。下面标出每个值来自哪里：<b>文件设置</b> 表示
-        config.json 里写了这一项，<b>默认回退</b> 表示文件没写、程序用了自己的选择。单位写在字段名后面。
+        {t('settings.provIntro1')}
+        <b>{t('settings.provFromFile')}</b>
+        {t('settings.provIntro2')}
+        <b>{t('settings.provFromDefault')}</b>
+        {t('settings.provIntro3')}
       </div>
       <ul className="settings-paths" style={{ marginTop: 8 }}>
         {rows.map(([key, label]) => (
           <li key={key}>
             <Tag color={provenance[key] === 'config-file' ? 'blue' : 'default'}>
-              {provenance[key] === 'config-file' ? '文件设置' : '默认回退'}
+              {provenance[key] === 'config-file' ? t('settings.provFromFile') : t('settings.provFromDefault')}
             </Tag>
             <span className="mono">{label}</span>
             <span className="muted"> = {String(valueOf(key) ?? '')}</span>
@@ -154,9 +158,13 @@ function ProvenanceList({ settings }) {
         ))}
       </ul>
       <div className="muted" style={{ marginTop: 8 }}>
-        这一块只读。没有列在这里的键（例如 <span className="mono">topics</span>、
-        <span className="mono"> collection</span>、<span className="mono">workspaceAliases</span>）本页不改动，
-        见上面的「本页不改动的键」。
+        {t('settings.provReadOnly')}
+        <span className="mono">topics</span>
+        {t('settings.provListSep')}
+        <span className="mono"> collection</span>
+        {t('settings.provListSep')}
+        <span className="mono">workspaceAliases</span>
+        {t('settings.provReadOnlyTail', { title: t('settings.unchangedKeysTitle') })}
       </div>
     </div>
   );
@@ -166,6 +174,7 @@ function ProvenanceList({ settings }) {
 // 由哪一层决定的」，而不是给一个看起来像开关、实际只管渲染的控件。数据来自后端的 privacyView()，
 // 与 `memkeel privacy show` 打印的是同一个函数，两边不可能说法不一致。
 function CollectionPolicy({ collection }) {
+  const { t } = useI18n();
   if (!collection) return null;
   const decision = collection.decision ?? {};
   const scopes = collection.scopes ?? {};
@@ -174,7 +183,7 @@ function CollectionPolicy({ collection }) {
   const exclusions = scopes.exclusions ?? [];
   const scoped = collection.context?.scoped === true;
   const stateTag = (state) => (
-    <Tag color={state === 'off' ? 'red' : 'green'}>{state === 'off' ? '关闭' : '开启'}</Tag>
+    <Tag color={state === 'off' ? 'red' : 'green'}>{state === 'off' ? t('settings.coll.off') : t('settings.coll.on')}</Tag>
   );
   return (
     <div>
@@ -182,18 +191,17 @@ function CollectionPolicy({ collection }) {
         type={decision.collecting ? 'success' : 'warning'}
         showIcon
         message={scoped
-          ? (decision.collecting ? '该上下文会被采集' : '该上下文不会被采集')
-          : (decision.collecting ? '默认判定：采集' : '默认判定：不采集')}
+          ? (decision.collecting ? t('settings.coll.scopedOn') : t('settings.coll.scopedOff'))
+          : (decision.collecting ? t('settings.coll.defaultOn') : t('settings.coll.defaultOff'))}
         description={(
           <div>
             <div>{decision.reason}</div>
             <div className="muted" style={{ marginTop: 4 }}>
-              由「{decision.decidedBy}」这一层决定。优先级只让采集变得更少：全局关闭是硬停，任何更窄的开关都不能把它重新打开。
+              {t('settings.coll.decidedBy', { layer: decision.decidedBy })}
             </div>
             {!scoped && (
               <div className="muted" style={{ marginTop: 4 }}>
-                本页没有具体会话上下文，所以判定按「未指定宿主 / 工作区」计算；工作区级与宿主级的关闭只在对应上下文中生效，
-                具体范围见下面的作用域列表。
+                {t('settings.coll.noContext')}
               </div>
             )}
           </div>
@@ -204,44 +212,48 @@ function CollectionPolicy({ collection }) {
         size="small"
         style={{ marginTop: 10 }}
         items={[
-          { key: 'global', label: '全局 enabled', children: stateTag(scopes.global) },
+          { key: 'global', label: t('settings.coll.global'), children: stateTag(scopes.global) },
           {
             key: 'hosts',
-            label: '宿主级',
+            label: t('settings.coll.hostLevel'),
             children: hosts.length
-              ? hosts.map((row) => <Tag key={row.host} color={row.state === 'off' ? 'red' : 'green'}>{row.host}：{row.state === 'off' ? '关闭' : '开启'}</Tag>)
-              : <span className="muted">未单独设置</span>,
+              ? hosts.map((row) => <Tag key={row.host} color={row.state === 'off' ? 'red' : 'green'}>{row.host}{t('punct.labelSeparator')}{row.state === 'off' ? t('settings.coll.off') : t('settings.coll.on')}</Tag>)
+              : <span className="muted">{t('settings.coll.notSet')}</span>,
           },
           {
             key: 'workspaces',
-            label: '工作区级',
+            label: t('settings.coll.workspaceLevel'),
             children: workspaces.length
-              ? workspaces.map((row) => <Tag key={row.workspace} color={row.state === 'off' ? 'red' : 'green'}>{row.workspace}：{row.state === 'off' ? '关闭' : '开启'}</Tag>)
-              : <span className="muted">未单独设置</span>,
+              ? workspaces.map((row) => <Tag key={row.workspace} color={row.state === 'off' ? 'red' : 'green'}>{row.workspace}{t('punct.labelSeparator')}{row.state === 'off' ? t('settings.coll.off') : t('settings.coll.on')}</Tag>)
+              : <span className="muted">{t('settings.coll.notSet')}</span>,
           },
           {
             key: 'exclusions',
-            label: '排除规则',
+            label: t('settings.coll.exclusions'),
             children: exclusions.length
               ? exclusions.map((row) => <div key={`${row.kind}:${row.rule}`} className="mono">{row.kind} = {row.rule}</div>)
-              : <span className="muted">无</span>,
+              : <span className="muted">{t('settings.coll.none')}</span>,
           },
         ]}
       />
-      <Divider plain style={{ margin: '10px 0' }}>三种「删除」不是一回事</Divider>
+      <Divider plain style={{ margin: '10px 0' }}>{t('settings.coll.deleteDivider')}</Divider>
       <ul className="settings-paths">
         {(collection.vocabulary ?? []).map((row) => (
           <li key={row.state}>
-            <Tag color={row.supported ? 'green' : 'default'}>{row.supported ? '已提供' : '不提供'}</Tag>
-            <b>{row.label}</b>：{row.meaning}
+            <Tag color={row.supported ? 'green' : 'default'}>{row.supported ? t('settings.coll.provided') : t('settings.coll.notProvided')}</Tag>
+            <b>{row.label}</b>{t('punct.labelSeparator')}{row.meaning}
           </li>
         ))}
       </ul>
       <div className="muted" style={{ marginTop: 8 }}>{collection.permanentDeletion}</div>
       <div className="muted" style={{ marginTop: 8 }}>
-        本页只展示、不修改采集开关。改完 <Text className="mono">collection</Text> 后可用{' '}
-        <Text className="mono">memkeel privacy show</Text> 复核，或用{' '}
-        <Text className="mono">memkeel privacy export --out FILE</Text> 导出一份脱敏诊断。
+        {t('settings.coll.readOnlyNote1')}
+        <Text className="mono">collection</Text>
+        {t('settings.coll.readOnlyNote2')}
+        <Text className="mono">memkeel privacy show</Text>
+        {t('settings.coll.readOnlyNote3')}
+        <Text className="mono">memkeel privacy export --out FILE</Text>
+        {t('settings.coll.readOnlyNote4')}
       </div>
     </div>
   );
