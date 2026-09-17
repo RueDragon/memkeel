@@ -51,10 +51,11 @@ for (const [relative, text] of sources) {
 // Ratchet: the number of hardcoded Chinese literals outside the catalogue. Lowering this is the
 // remaining UX-01 work — 453 when the ratchet was introduced, 418 after four views, 394 after the
 // confirmation modal, 352 after the reference page, 331 after the edit dialog, 320 after the search
-// palette, 310 after the open-work view, 302 after the facts view — and raising it means a new string
-// was written into a component instead of into the catalogue, which is the regression this guards.
-// The failure message names the largest remaining files.
-const HARDCODED_BUDGET = 302;
+// palette, 310 after the open-work view, 302 after the facts view, 295 after the event-summary
+// module — and raising it means a new string was written into a component instead of into the
+// catalogue, which is the regression this guards. The failure message names the largest remaining
+// files.
+const HARDCODED_BUDGET = 295;
 
 test('every locale defines exactly the same keys', () => {
   const expected = Object.keys(MESSAGES[DEFAULT_LOCALE]).sort();
@@ -108,6 +109,7 @@ const CONVERTED = [
   'components/DecisionModal.jsx',
   'components/EditModal.jsx',
   'components/SearchPalette.jsx',
+  'lib/events.js',
   'views/Actions.jsx',
   'views/Conflicts.jsx',
   'views/Events.jsx',
