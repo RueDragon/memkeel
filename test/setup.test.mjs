@@ -366,15 +366,22 @@ test('rewriting a host config keeps its permissions', { skip: process.platform =
 test('two concurrent setups both keep their receipt entries', async (t) => {
   const { home, env } = multiFixture(t);
   const runSetup = (hosts) => new Promise((resolve) => {
-    const child = spawn(process.execPath, [cli, 'setup', '--hosts', hosts, '--home', home], { env, windowsHide: true, stdio: 'ignore' });
-    child.on('close', (code) => resolve(code));
+    const child = spawn(process.execPath, [cli, 'setup', '--hosts', hosts, '--home', home], { env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('close', (code) => resolve({ code, stderr }));
   });
 
   // Both processes read the receipt, rewrite host files and record what they did. Writing each
   // one's own in-memory copy would lose the other's entries - and with them the pre-install bytes
   // that are the only way to restore those files.
-  const codes = await Promise.all([runSetup('codex'), runSetup('zcode')]);
-  assert.deepEqual(codes, [0, 0]);
+  const results = await Promise.all([runSetup('codex'), runSetup('zcode')]);
+  const codes = results.map((row) => row.code);
+  // This test exists to catch a concurrent setup failing, and that failure is intermittent: it
+  // happened once on a Windows CI runner and did not reproduce in twelve local runs. The child's own
+  // message is the only thing that says why it failed, so it is carried into the assertion instead of
+  // being discarded - with stdio: 'ignore' a failure here said nothing at all.
+  assert.deepEqual(codes, [0, 0], results.map((row) => row.stderr.trim()).filter(Boolean).join('\n---\n'));
 
   const files = Object.keys(receiptOf(home).files);
   assert.ok(files.some((file) => file.includes('codex')), `no codex entry in ${JSON.stringify(files)}`);
