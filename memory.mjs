@@ -171,7 +171,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
     if (options.preview === true) { console.error(t('cli.error.privacyPreviewNeedsFile')); process.exit(2); }
     let samples = {};
     if (typeof options.preview === 'string') samples = JSON.parse(fs.readFileSync(options.preview, 'utf8'));
-    console.log(JSON.stringify({ home: policyRoot, ...previewExclusions(loaded, samples) }, null, 2));
+    console.log(JSON.stringify(renderMessages({ home: policyRoot, ...previewExclusions(loaded, samples) }, t), null, 2));
   }
 } else if (command === 'backup' || command === 'restore') {
   // These commands work on an archive, not on this machine's store, so they run before the "is there

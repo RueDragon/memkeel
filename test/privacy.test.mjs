@@ -20,6 +20,12 @@ import {
   DELETION_VOCABULARY, cleanupPreview, matchExclusion, normalizeCollection, previewExclusions,
   privacyView, resolveCollection,
 } from '../lib/privacy.mjs';
+import { makeTranslator, renderMessages } from '../lib/messages.mjs';
+
+// The preview carries message references rather than sentences, so a test that cares about the
+// wording renders them the way a caller does. The locale is pinned so the assertion does not depend
+// on the machine it runs on.
+const en = makeTranslator('en');
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-privacy-'));
@@ -141,9 +147,10 @@ test('a cleanup preview deletes nothing and lists what it does not cover', () =>
   assert.equal(preview.dryRun, true);
   assert.equal(preview.executed, false);
   assert.equal(preview.retention.contextDays, 7);
-  assert.match(preview.scope[0].rule, /7 天/);
-  assert.ok(preview.notCovered.some((line) => /已写入账本的事件/.test(line)));
-  assert.match(preview.note, /没有删除任何文件/);
+  const rendered = renderMessages(preview, en);
+  assert.match(rendered.scope[0].rule, /7 days/);
+  assert.ok(rendered.notCovered.some((line) => /already written to the ledger/.test(line)));
+  assert.match(rendered.note, /no file was deleted/);
 });
 
 // ------------------------------------------------------------------ acceptance

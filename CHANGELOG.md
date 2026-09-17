@@ -9,6 +9,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The privacy previews emit message references too.** `privacy.mjs`'s `cleanupPreview` and
+  `previewExclusions` built their scope rows, their notCovered lists and their notes out of Chinese
+  sentences, so `memkeel privacy cleanup` and `memkeel privacy exclusions` printed English error
+  lines around a Chinese payload. Both now emit references and the CLI renders them, which leaves
+  exactly one Chinese line in that output: the collection decision's `reason`. That field is not
+  convertible yet because the dashboard renders it too, and the dashboard cannot render a reference
+  until it does so itself.
 - **Library code no longer picks a language: it emits message references.** `lib/cleanup.mjs` used to
   build its retention plan out of Chinese sentences, so `memkeel privacy cleanup` printed English
   error lines next to a Chinese plan and there was no way to render that plan in another language at
