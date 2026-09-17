@@ -170,6 +170,15 @@ The memory home is resolved by one precedence, shared by every command:
 
 The same directory holds `bootstrap.md`, `event-schema.md`, `backups/` and `state/`.
 
+The language of everything the CLI prints for a person is resolved by a second precedence:
+
+1. `MEMKEEL_LOCALE` (`en` or `zh-Hans`)
+2. `LC_ALL`, `LC_MESSAGES`, `LANG`
+3. English
+
+Only the text meant for a person is translated. The JSON payloads keep their field names, and text
+that lands in the store - note bodies, event bodies, evidence text - is data and is never translated.
+
 The schema is documented in full by [`config.example.json`](config.example.json). Copy it to
 `<memory home>/config.json` and edit it, or let `memkeel init` write it for you. Three read-only
 commands inspect it and write nothing:

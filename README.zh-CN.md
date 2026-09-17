@@ -162,6 +162,15 @@ memory home 由一条所有命令共用的优先级决定：
 
 同一目录下还存放 `bootstrap.md`、`event-schema.md`、`backups/` 和 `state/`。
 
+CLI 打印给人看的文字由第二条优先级决定：
+
+1. `MEMKEEL_LOCALE`（`en` 或 `zh-Hans`）
+2. `LC_ALL`、`LC_MESSAGES`、`LANG`
+3. 英文
+
+只有给人看的文字会翻译。JSON 的字段名保持不变；写进存储的内容——笔记正文、事件正文、证据
+文本——属于数据，永远不翻译。
+
 完整 schema 见 [`config.example.json`](config.example.json)。把它复制为
 `<memory home>/config.json` 并编辑，或者让 `memkeel init` 为你写入。下面三条命令只读检查，
 不会写入任何东西：

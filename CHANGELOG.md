@@ -9,6 +9,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The CLI's user-facing text now comes from a catalogue, and one locale governs all of it.** Until
+  now the same program printed English in its `Usage:` and error lines while the `note`, `readError`
+  and `maskNote` prose inside its JSON output was Chinese, so a single run could mix both languages.
+  Every string printed for a person now lives in `lib/messages.mjs` with `en` and `zh-Hans` tables,
+  and the language is resolved from `MEMKEEL_LOCALE`, then `LC_ALL`/`LC_MESSAGES`/`LANG`, then
+  English. It is a second catalogue rather than a share of the dashboard's because the published
+  package ships `lib/` and the built `dashboard/static/` but not `dashboard/app/`, so an installed
+  CLI has no dashboard catalogue on disk to read. `test/cli-messages.test.mjs` applies the same
+  discipline the dashboard guardrails do - equal key sets, no blank strings, every referenced key
+  present - plus the check that would have caught the original bug: the entry point must print no
+  Chinese of its own, and the same broken invocation must come back in the language the environment
+  asked for. Text produced by `lib/` itself (config validation messages, cleanup group labels,
+  digests) is not catalogued yet.
 - **Fixed: `localDay` rebuilt an `Intl.DateTimeFormat` on every call, and consolidating a ledger was
   spending much of its time constructing formatters.** Measured at 8000 events, 8000 `localDay` calls cost
   440 ms through a per-call formatter against 11 ms through one shared formatter, and a single

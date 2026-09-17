@@ -28,7 +28,7 @@ function fixture(t) {
   const store = path.join(root, 'store');
   const out = path.join(root, 'archive');
   const into = path.join(root, 'restored');
-  const run = (...args) => spawnSync(process.execPath, [cli, ...args, '--home', home], { encoding: 'utf8', windowsHide: true });
+  const run = (...args) => spawnSync(process.execPath, [cli, ...args, '--home', home], { encoding: 'utf8', windowsHide: true, env: { ...process.env, MEMKEEL_LOCALE: 'en' } });
   assert.equal(run('init', '--store', store).status, 0);
   return { root, home, store, out, into, run, config: loadConfig(home).config };
 }
@@ -309,7 +309,7 @@ test('a restore refuses a tampered archive and writes nothing', (t) => {
   corrupt(f.out, 'store/habits.md');
   const executed = f.run('restore', '--dir', f.out, '--into', f.into, '--execute');
   assert.equal(executed.status, 1);
-  assert.match(executed.stderr, /归档未通过校验|未通过校验/);
+  assert.match(executed.stderr, /the archive failed verification/);
   // Nothing was half-written: the integrity check runs before the first byte is copied.
   assert.equal(fs.existsSync(f.into), false);
 });

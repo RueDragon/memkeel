@@ -45,7 +45,7 @@ function fixture(t) {
       experienceNote: 'experience.md', inboxRoot: 'digest' },
     ...extra,
   });
-  const run = (...args) => spawnSync(process.execPath, [cli, ...args, '--home', home], { encoding: 'utf8', windowsHide: true });
+  const run = (...args) => spawnSync(process.execPath, [cli, ...args, '--home', home], { encoding: 'utf8', windowsHide: true, env: { ...process.env, MEMKEEL_LOCALE: 'en' } });
   return { root, home, store, write, complete, run };
 }
 
@@ -74,7 +74,7 @@ test('a blank or non-string --home never silently becomes a directory name', () 
 });
 
 test('the CLI rejects --home with no value instead of falling back to another store', () => {
-  const result = spawnSync(process.execPath, [cli, 'config', 'validate', '--home'], { encoding: 'utf8', windowsHide: true });
+  const result = spawnSync(process.execPath, [cli, 'config', 'validate', '--home'], { encoding: 'utf8', windowsHide: true, env: { ...process.env, MEMKEEL_LOCALE: 'en' } });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /--home requires a directory/);
 });
@@ -387,11 +387,11 @@ test('an unknown config action fails with usage rather than doing something', (t
 
 test('config validate reports a missing memory home instead of crashing', (t) => {
   const { root } = fixture(t);
-  const result = spawnSync(process.execPath, [cli, 'config', 'validate', '--home', path.join(root, 'absent')], { encoding: 'utf8', windowsHide: true });
+  const result = spawnSync(process.execPath, [cli, 'config', 'validate', '--home', path.join(root, 'absent')], { encoding: 'utf8', windowsHide: true, env: { ...process.env, MEMKEEL_LOCALE: 'en' } });
   assert.equal(result.status, 1);
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, false);
-  assert.match(JSON.stringify(report.issues), /不存在/);
+  assert.match(JSON.stringify(report.issues), /does not exist/);
   assert.doesNotMatch(result.stderr, /\n\s+at /);
 });
 

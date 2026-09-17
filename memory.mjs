@@ -20,6 +20,11 @@ import { auditDiagnostics, buildDiagnostics, writeDiagnostics } from './lib/diag
 import { initStore } from './lib/init.mjs';
 import { planCodexBackfill, applyCodexBackfill } from './lib/ingest/backfill.mjs';
 import { startServer } from './dashboard.mjs';
+import { makeTranslator } from './lib/messages.mjs';
+
+// Every string this CLI prints for a person comes from lib/messages.mjs, so a single locale governs
+// the whole surface; that file explains why it is a separate catalogue from the dashboard's.
+const t = makeTranslator();
 
 const argv = process.argv.slice(2);
 const first = argv.shift() ?? 'help';
@@ -31,11 +36,11 @@ const subcommand = SUBCOMMAND_HOSTS.has(command) && argv.length && !argv[0].star
 const options = {};
 while (argv.length) {
   const key = argv.shift();
-  if (!key.startsWith('--')) throw new Error(`Unexpected argument: ${key}`);
+  if (!key.startsWith('--')) throw new Error(t('cli.error.unexpectedArgument', { argument: key }));
   options[key.slice(2)] = argv[0] && !argv[0].startsWith('--') ? argv.shift() : true;
 }
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-if (options.home === true) throw new Error('--home requires a directory');
+if (options.home === true) throw new Error(t('cli.error.homeNeedsDirectory'));
 // One precedence for every entry point: --home, then MEMKEEL_HOME, then the per-user default.
 const { home: policyRoot, source: homeSource } = resolveHome({ home: typeof options.home === 'string' ? options.home : '' });
 const configPath = path.join(policyRoot, 'config.json');
@@ -60,7 +65,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
   // `--dry-run` is the default, so it is accepted for the plan's spelling of the command; asking
   // for both would be contradictory rather than "apply wins".
   if (!['validate', 'show', 'migrate'].includes(action) || ((options.apply || options['dry-run']) && action !== 'migrate') || (options.apply && options['dry-run'])) {
-    console.error('Usage: memkeel config validate|show|migrate [--dry-run|--apply] [--reveal-paths] [--home DIR]');
+    console.error(t('cli.usage.config'));
     process.exit(2);
   }
   const base = { home: policyRoot, homeSource, file: configPath };
@@ -68,16 +73,16 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
   // to explain what is wrong with the configuration, including that there is not one.
   let raw = null;
   let readError = null;
-  if (!fs.existsSync(configPath)) readError = `${configPath} 不存在；先运行 memkeel init。`;
+  if (!fs.existsSync(configPath)) readError = t('cli.config.missing', { path: configPath });
   else {
     try { raw = JSON.parse(fs.readFileSync(configPath, 'utf8')); }
-    catch (error) { readError = `${configPath} 无法解析：${error.message}`; }
+    catch (error) { readError = t('cli.config.unparsable', { path: configPath, error: error.message }); }
   }
   if (readError) {
     if (action === 'validate') {
       console.log(JSON.stringify({ ...base, schemaVersion: CONFIG_SCHEMA_VERSION, ok: false, issues: [{ field: 'config', message: readError }], notes: [] }, null, 2));
     } else {
-      console.error(`No usable config: ${readError}`);
+      console.error(t('cli.error.noUsableConfig', { error: readError }));
     }
     process.exitCode = 1;
   } else if (action === 'validate') {
@@ -87,7 +92,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
   } else if (action === 'show') {
     const view = effectiveConfigView(raw, { revealPaths: Boolean(options['reveal-paths']) });
     console.log(JSON.stringify({ ...base, schemaVersion: CONFIG_SCHEMA_VERSION, effective: view.entries, rolesRoot: view.role, deprecatedKeys: view.deprecated,
-      maskNote: options['reveal-paths'] ? '路径原样输出。' : '路径已脱敏；加 --reveal-paths 输出完整路径。' }, null, 2));
+      maskNote: t(options['reveal-paths'] ? 'cli.config.maskRevealed' : 'cli.config.maskRedacted') }, null, 2));
   } else if (options.apply) {
     // The only write in this command, and only when it is asked for by name. `--apply` carries its
     // own safety: an empty plan writes nothing, the migrated document is validated before it is
@@ -99,13 +104,13 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
         applied: outcome.applied, backup: outcome.backup, changes: outcome.changes,
         ...(outcome.applied ? {} : { reason: outcome.reason }) }, null, 2));
     } catch (error) {
-      console.error(`config migrate --apply: ${error.message}`);
+      console.error(t('cli.error.configMigrateApply', { error: error.message }));
       process.exitCode = 1;
     }
   } else {
     const plan = planConfigMigration(raw);
     console.log(JSON.stringify({ ...base, fromSchema: plan.fromSchema, toSchema: plan.toSchema, changes: plan.changes,
-      applied: false, dryRun: true, note: '只读计划：没有写入任何文件，也没有创建任何目录。' }, null, 2));
+      applied: false, dryRun: true, note: t('cli.config.migratePlan') }, null, 2));
   }
 } else if (command === 'privacy') {
   // `show`, `exclusions` and a bare `cleanup` are read-only: they answer "what would be collected,
@@ -115,7 +120,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
   // `cleanup --execute` removes the retention targets its own plan listed.
   const action = subcommand || 'show';
   if (!['show', 'exclusions', 'cleanup', 'export'].includes(action)) {
-    console.error('Usage: memkeel privacy show|exclusions [--preview FILE]|cleanup [--execute] [--host H] [--workspace W] [--cwd DIR]|export --out FILE');
+    console.error(t('cli.usage.privacy'));
     process.exit(2);
   }
   let loaded = {};
@@ -139,14 +144,14 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       if (result.errors.length) process.exitCode = 1;
     }
   } else if (action === 'export') {
-    if (options.out === true || typeof options.out !== 'string') { console.error('privacy export requires --out FILE'); process.exit(2); }
+    if (options.out === true || typeof options.out !== 'string') { console.error(t('cli.error.privacyExportNeedsOut')); process.exit(2); }
     const bundle = buildDiagnostics(loaded, { version: VERSION });
     // Audit the real bytes before they are written, not after: an export that promises to be free of
     // paths and credentials should be checked against what it actually contains, and a failed check
     // must leave nothing behind.
     const audit = auditDiagnostics(bundle, { home: policyRoot, store: loaded.vaultRoot });
     if (!audit.clean) {
-      console.error(`privacy export: 脱敏自检未通过，未写出任何文件：${audit.leaks.map((leak) => leak.label).join('；')}`);
+      console.error(t('cli.error.privacyExportAudit', { labels: audit.leaks.map((leak) => leak.label).join(t('cli.listSep')) }));
       process.exitCode = 1;
     } else {
       try {
@@ -156,14 +161,14 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       } catch (error) {
         // A refusal to overwrite is an ordinary outcome, not a crash: report it as a message rather
         // than letting a stack trace stand in for an explanation.
-        console.error(`privacy export: ${error.message}`);
+        console.error(t('cli.error.privacyExport', { error: error.message }));
         process.exitCode = 1;
       }
     }
   } else {
     // `--preview` takes a JSON file of sample values, so a rule can be evaluated against the real
     // paths it is supposed to govern instead of being trusted because it looks right.
-    if (options.preview === true) { console.error('privacy exclusions --preview requires a JSON file'); process.exit(2); }
+    if (options.preview === true) { console.error(t('cli.error.privacyPreviewNeedsFile')); process.exit(2); }
     let samples = {};
     if (typeof options.preview === 'string') samples = JSON.parse(fs.readFileSync(options.preview, 'utf8'));
     console.log(JSON.stringify({ home: policyRoot, ...previewExclusions(loaded, samples) }, null, 2));
@@ -174,7 +179,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
   try {
     const action = command === 'restore' ? 'restore' : subcommand;
     if (command === 'backup' && !['create', 'verify'].includes(action)) {
-      console.error('Usage: memkeel backup create --out DIR | memkeel backup verify --dir DIR');
+      console.error(t('cli.usage.backup'));
       process.exit(2);
     }
     if (action === 'create') {
@@ -182,47 +187,47 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       const result = createBackup(config, { out: options.out, version: VERSION });
       console.log(JSON.stringify({ dir: result.dir, files: result.files, bytes: result.bytes, notCarried: result.notCarried,
         manifest: result.manifest.counts,
-        note: '备份也是敏感数据：它含事件账本，也可能含宿主配置的原始字节。请把它当成私密目录，并依赖系统磁盘加密与目录权限。' }, null, 2));
+        note: t('cli.backup.note') }, null, 2));
     } else if (action === 'verify') {
-      if (!options.dir) { console.error('Usage: memkeel backup verify --dir DIR'); process.exit(2); }
+      if (!options.dir) { console.error(t('cli.usage.backupVerify')); process.exit(2); }
       const report = verifyBackup(String(options.dir));
       console.log(JSON.stringify(report, null, 2));
       if (!report.ok) process.exitCode = 1;
     } else {
-      if (!options.dir) { console.error('Usage: memkeel restore --dir DIR --into DIR [--execute]'); process.exit(2); }
+      if (!options.dir) { console.error(t('cli.usage.restore')); process.exit(2); }
       const manifest = readManifest(String(options.dir));
       // The space check needs a destination to measure; without --into the plan is still reported.
       const review = reviewRestore(manifest, { into: options.into, free: options.into ? freeBytes(String(options.into)) : null });
       if (!options.execute) {
         console.log(JSON.stringify({ ...review, dryRun: true, executed: false, files: manifest.files.length,
-          note: '只读计划：没有写入任何文件。加 --execute 执行。' }, null, 2));
+          note: t('cli.restore.plan') }, null, 2));
         if (!review.ok) process.exitCode = 1;
       } else {
         // Integrity first, then safety: an archive whose bytes do not match its own manifest must not
         // be half-written into the destination and only then discovered to be broken.
         const integrity = verifyBackup(String(options.dir));
         if (!integrity.ok) {
-          console.error(`restore: 归档未通过校验，未写入任何内容：${integrity.problems.map((problem) => problem.message).join('；')}`);
+          console.error(t('cli.error.restoreIntegrity', { problems: integrity.problems.map((problem) => problem.message).join(t('cli.listSep')) }));
           process.exitCode = 1;
         } else if (!review.ok) {
-          console.error(`restore: ${review.issues.map((issue) => issue.message).join('；')}`);
+          console.error(t('cli.error.restoreIssues', { issues: review.issues.map((issue) => issue.message).join(t('cli.listSep')) }));
           process.exitCode = 1;
         } else {
           const result = restoreBackup(String(options.dir), { into: options.into, manifest });
           console.log(JSON.stringify({ ...result, verified: integrity.counts,
-            note: '已恢复到新目录，并把 config.json 的路径改指到新位置。索引与投影属于派生数据、未随备份携带：请在新库上运行 memkeel index 与 memkeel consolidate。' }, null, 2));
+            note: t('cli.restore.done') }, null, 2));
         }
       }
     }
   } catch (error) {
-    console.error(`${command}: ${error.message}`);
+    console.error(t('cli.error.commandFailed', { command, error: error.message }));
     process.exitCode = 1;
   }
 } else if (!fs.existsSync(configPath)) {
   // Every other command needs an existing memory home. Reporting it here with one actionable
   // line beats the raw ENOENT stack trace a first-run user otherwise gets - which is exactly
   // what the container's default `doctor` did against an empty volume.
-  console.error(`No memory home at ${policyRoot}.\nRun \`memkeel init\` first, then retry \`${command}\`.`);
+  console.error(t('cli.error.noMemoryHome', { home: policyRoot, command }));
   process.exit(1);
 } else {
   const { config } = loadConfig(policyRoot);
@@ -241,7 +246,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       const input = JSON.parse(fs.readFileSync(options.file ?? 0, 'utf8').replace(/^\uFEFF/, ''));
       console.log(JSON.stringify(checkOperation(config, input), null, 2));
     } else if (['record', 'capture', 'habit-decide'].includes(command)) {
-      if (!options.file && !options.stdin) throw new Error('Supply --file or --stdin with a short evidence-backed JSON event');
+      if (!options.file && !options.stdin) throw new Error(t('cli.error.supplyFileOrStdin'));
       const input = JSON.parse(fs.readFileSync(options.stdin ? 0 : options.file, 'utf8').replace(/^\uFEFF/, ''));
       if (command === 'capture') result = capture(config, transport, input.event, input.evidence_text);
       else if (command === 'habit-decide') result = decideHabit(config, transport, input);
@@ -281,7 +286,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       const plan = planMigration(config, { to: options.to });
       if (!options.execute) {
         console.log(JSON.stringify({ ...plan, dryRun: true, executed: false, copied: 0,
-          note: '只读计划：没有复制、也没有写入任何文件。加 --execute 执行。' }, null, 2));
+          note: t('cli.migrate.plan') }, null, 2));
         if (!plan.ok) process.exitCode = 1;
       } else {
         console.log(JSON.stringify(executeMigration(config, plan, { version: VERSION }), null, 2));
@@ -289,7 +294,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
     }
     else if (command === 'maintenance') console.log(JSON.stringify(maintain(config, transport, { rebuild: Boolean(options.rebuild) }), null, 2));
     else if (command === 'index') console.log(JSON.stringify(refreshIndex(config, { force: Boolean(options.force) }).io, null, 2));
-    else if (command === 'dashboard') { const port = options.port ? Number(options.port) : undefined; startServer(port ? { port } : {}).then(({ url }) => console.log('Memkeel dashboard: ' + url)); }
+    else if (command === 'dashboard') { const port = options.port ? Number(options.port) : undefined; startServer(port ? { port } : {}).then(({ url }) => console.log(t('cli.dashboard.started', { url }))); }
     else if (command === 'ingest-plan') {
       const since = typeof options.since === 'string' ? new Date(options.since) : null;
       const limit = options.limit ? Number(options.limit) : Infinity;
@@ -340,6 +345,6 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       // saying "ok" would be a guess while failing the run would be noise. Actual drift is not
       // healthy either, but it is not fatal to the store - it is reported for the user to fix.
       if (missing.length || lock.stale || checkpointLock.stale || check.captures.pending.length || !check.checkpoints.healthy || receipt.malformed || !launcher.ok) process.exitCode = 1;
-    } else throw new Error(`Unknown command: ${command}`);
+    } else throw new Error(t('cli.error.unknownCommand', { command }));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
