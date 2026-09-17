@@ -50,19 +50,19 @@ function bindingPaths(host, t) {
 // 写入后的重启须知：常驻的 MCP 服务进程只在启动时读一次配置，CLI 与 hook runner 每次调用
 // 都会重新读，所以只有宿主里常驻的那个进程需要重启，页面不会替你重启。
 function RestartNotice({ restart }) {
-  const { t } = useI18n();
+  const { t, shared } = useI18n();
   if (!restart) return null;
   return (
     <div>
-      <Alert type="warning" showIcon message={t('settings.restartNotice')} description={restart.reason} />
+      <Alert type="warning" showIcon message={t('settings.restartNotice')} description={shared(restart.reason)} />
       <ul className="settings-restart-list">
-        {restart.processes.map((row) => <li key={row.id}><b>{row.label}</b>{t('punct.labelSeparator')}{row.service}</li>)}
+        {restart.processes.map((row) => <li key={row.id}><b>{row.label}</b>{t('punct.labelSeparator')}{shared(row.service)}</li>)}
       </ul>
       <div>
         <span className="muted">{t('settings.recheckBinding')}</span>{' '}
         <Text className="mono" copyable={{ text: restart.command }}>{restart.command}</Text>
       </div>
-      <div className="muted" style={{ marginTop: 6 }}>{restart.commandHint}</div>
+      <div className="muted" style={{ marginTop: 6 }}>{shared(restart.commandHint)}</div>
       <div className="muted" style={{ marginTop: 6 }}>
         {t('settings.restartExplainer')}
       </div>
@@ -71,7 +71,7 @@ function RestartNotice({ restart }) {
 }
 
 function ObsidianGuide({ obsidian }) {
-  const { t } = useI18n();
+  const { t, shared } = useI18n();
   if (!obsidian) return null;
   const rows = obsidian.detected ?? [];
   const found = rows.filter((row) => row.exists);
@@ -93,7 +93,7 @@ function ObsidianGuide({ obsidian }) {
                 {found.map((row) => (
                   <li key={row.path}>
                     <Tag color="green">{t('settings.exists')}</Tag>
-                    <span className="muted">{row.label}</span>{' '}
+                    <span className="muted">{shared(row.label)}</span>{' '}
                     <Text className="mono" type="secondary">{row.path}</Text>
                   </li>
                 ))}
@@ -111,7 +111,7 @@ function ObsidianGuide({ obsidian }) {
           {rows.map((row) => (
             <li key={row.path}>
               <Tag color={row.exists ? 'green' : 'default'}>{row.exists ? t('settings.exists') : t('settings.notFound')}</Tag>
-              <span className="muted">{row.label}</span>{' '}
+              <span className="muted">{shared(row.label)}</span>{' '}
               <Text className="mono" type="secondary">{row.path}</Text>
             </li>
           ))}
@@ -616,7 +616,7 @@ export default function Settings({ reload }) {
       <div className="panel">
         <h3 className="panel-title">{t('settings.hosts.title')}</h3>
         <div>
-          <Alert type="info" showIcon style={{ marginBottom: 12 }} message={settings.setup.note} />
+          <Alert type="info" showIcon style={{ marginBottom: 12 }} message={shared(settings.setup.note)} />
           <DataTable
             columns={hostColumns}
             data={settings.hostBindings ?? []}

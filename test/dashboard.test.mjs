@@ -184,7 +184,17 @@ test('settings endpoint reports the config path, the editable groups and the rea
     assert.equal(body.restart.processes.length, 4);
     // 宿主绑定必须在界面之外完成：页面只拿到命令。
     assert.match(body.setup.apply, /setup/);
-    assert.match(body.setup.note, /命令行/);
+    assert.match(renderMessages(body.setup.note, en), /read-only check/);
+    // This payload carries prose that originates in lib/dashboard-data.mjs and is rendered by the
+    // page. The page's own translation ratchet only scans dashboard/app/src, so it cannot see a
+    // string that arrives from the library - these assertions are what stands in for it.
+    assert.ok(isMessageReference(body.setup.note), JSON.stringify(body.setup.note));
+    assert.ok(isMessageReference(body.restart.reason), JSON.stringify(body.restart.reason));
+    assert.ok(isMessageReference(body.restart.commandHint), JSON.stringify(body.restart.commandHint));
+    assert.ok(body.restart.processes.every((row) => isMessageReference(row.service)), JSON.stringify(body.restart.processes));
+    assert.ok(body.obsidian.detected.every((row) => isMessageReference(row.label)), JSON.stringify(body.obsidian.detected));
+    assert.match(renderMessages(body.restart.reason, en), /re-read the configuration/);
+    assert.match(renderMessages(body.obsidian.detected, en)[0].label, /obsidianCli|Windows|macOS|Linux|user-local/);
   });
 });
 
