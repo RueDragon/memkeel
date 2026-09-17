@@ -131,8 +131,8 @@ function ProvenanceList({ settings }) {
   if (!provenance) return null;
   const rows = [
     ...['storage', 'memoryRoot', 'vaultRoot', 'vaultName', 'obsidianCli', 'layout'].map((key) => [key, key]),
-    ...(settings.numberFields ?? []).map((field) => [field.key, t('settings.provFieldLabel', { key: field.key, label: field.label })]),
-    ...(settings.roleFields ?? []).map((field) => [`roles.${field.key}`, t('settings.provFieldLabel', { key: field.key, label: field.label })]),
+    ...(settings.numberFields ?? []).map((field) => [field.key, t('settings.fieldLabel', { key: field.key, label: field.label })]),
+    ...(settings.roleFields ?? []).map((field) => [`roles.${field.key}`, t('settings.fieldLabel', { key: field.key, label: field.label })]),
   ];
   const valueOf = (key) => (key.startsWith('roles.')
     ? settings.groups?.roles?.[key.slice('roles.'.length)]
@@ -535,15 +535,15 @@ export default function Settings({ reload }) {
       </div>
 
       <div className="panel" style={{ marginTop: 12 }}>
-        <h3 className="panel-title">布局</h3>
+        <h3 className="panel-title">{t('settings.layout.title')}</h3>
         <div>
           <Row gutter={16}>
             <Col span={24}>
               <Form.Item
                 name="layout"
-                label="layout（布局）"
-                rules={[{ required: true, message: '请选择布局' }]}
-                extra="角色是逻辑名，程序按角色找目录，所以换物理结构不需要改代码。"
+                label={t('settings.layout.label')}
+                rules={[{ required: true, message: t('settings.layout.choose') }]}
+                extra={t('settings.layout.extra')}
               >
                 <Select options={settings.layoutOptions} />
               </Form.Item>
@@ -552,29 +552,29 @@ export default function Settings({ reload }) {
               <Col span={8} key={key}>
                 <Form.Item
                   name={['roles', key]}
-                  label={`${key}（${label}）`}
-                  rules={[{ required: true, message: `请填写 ${key}` }]}
+                  label={t('settings.fieldLabel', { key, label })}
+                  rules={[{ required: true, message: t('settings.form.required', { key }) }]}
                 >
                   <Input className="mono" />
                 </Form.Item>
               </Col>
             ))}
           </Row>
-          <div className="muted">所有角色都必须落在 memoryRoot 之内；用 `..` 或符号链接绕出去会被拒绝。</div>
+          <div className="muted">{t('settings.layout.insideRoot')}</div>
         </div>
       </div>
 
       <div className="panel" style={{ marginTop: 12 }}>
-        <h3 className="panel-title">检索与注入参数</h3>
+        <h3 className="panel-title">{t('settings.params.title')}</h3>
         <div>
           <Row gutter={16}>
             {(settings.numberFields ?? []).map((field) => (
               <Col span={6} key={field.key}>
                 <Form.Item
                   name={field.key}
-                  label={`${field.key}（${field.label}）`}
+                  label={t('settings.fieldLabel', { key: field.key, label: field.label })}
                   extra={field.hint}
-                  rules={[{ required: true, message: `请填写 ${field.key}` }]}
+                  rules={[{ required: true, message: t('settings.form.required', { key: field.key }) }]}
                 >
                   <InputNumber
                     min={field.min}
@@ -591,14 +591,14 @@ export default function Settings({ reload }) {
       </div>
 
       <div className="panel" style={{ marginTop: 12 }}>
-        <h3 className="panel-title">生效值与来源（只读）</h3>
+        <h3 className="panel-title">{t('settings.provenance.title')}</h3>
         <div>
           <ProvenanceList settings={settings} />
         </div>
       </div>
 
       <div className="panel" style={{ marginTop: 12 }}>
-        <h3 className="panel-title">采集与隐私（只读）</h3>
+        <h3 className="panel-title">{t('settings.collection.title')}</h3>
         <div>
           <CollectionPolicy collection={settings.collection} />
         </div>

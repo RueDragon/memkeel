@@ -52,7 +52,9 @@ for (const [relative, text] of sources) {
 // markers in lib/chat.js are exempt data rather than translatable text, so the effective floor is 4
 // and not 0. Lowering this is the remaining UX-01 work — 453 when the ratchet was introduced, then
 // 418, 394, 352, 331, 320, 310, 302, 295, 294, 293, and 292 after the chat bubbles. It kept falling as
-// later pages were converted; the last four blocks took it to 55, then 37, then 28, then 9 — and raising it
+// later pages were converted; the last five blocks took it to 55, then 37, then 28, then 9, and then
+// to 4, which is the floor itself: no interface text outside the catalogue is a quoted literal any
+// more, and only JSX text nodes still carry Chinese, which is what JSX_TEXT_BUDGET below counts. Raising it
 // means a new string was written into a component instead of into the catalogue, which is the
 // regression this guards. The failure message names the largest remaining files.
 //
@@ -67,7 +69,7 @@ for (const [relative, text] of sources) {
 // two attribute quotes is therefore counted as a literal. Removing the first-run step whose line held
 // two className attributes lowered this count by one more than the number of real strings deleted.
 // Do not paste such a line into a comment either: it would be counted here as well.
-const HARDCODED_BUDGET = 9;
+const HARDCODED_BUDGET = 4;
 
 test('every locale defines exactly the same keys', () => {
   const expected = Object.keys(MESSAGES[DEFAULT_LOCALE]).sort();
@@ -185,7 +187,7 @@ test('every converted file is free of Chinese in JSX text', () => {
 // literal count above suggested — views/Settings.jsx alone renders 814 characters of Chinese prose
 // directly as JSX text while holding only 70 quoted literals, so the remaining work is dominated by
 // paragraphs written inline, not by short labels. Every converted file already measures zero here.
-const JSX_TEXT_BUDGET = 136;
+const JSX_TEXT_BUDGET = 88;
 
 test('Chinese rendered as JSX text outside the catalogue does not exceed its recorded budget', () => {
   const worst = [...jsxCounts].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([file, n]) => `${file}:${n}`);
