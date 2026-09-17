@@ -444,7 +444,7 @@ test('apply is idempotent: a second run writes nothing and leaves no second back
   const second = applyConfigMigration(home);
   assert.equal(second.applied, false);
   assert.equal(second.backup, null);
-  assert.match(second.reason, /无需迁移/);
+  assert.match(zh(second.reason), /无需迁移/);
   assert.equal(fs.readFileSync(path.join(home, 'config.json'), 'utf8'), settled);
   assert.deepEqual(fs.readdirSync(path.join(home, 'backups', 'config-migrations')), backups);
 });

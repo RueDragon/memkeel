@@ -105,7 +105,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       const outcome = applyConfigMigration(policyRoot);
       console.log(JSON.stringify({ ...base, fromSchema: raw.configSchema ?? null, toSchema: CONFIG_SCHEMA_VERSION,
         applied: outcome.applied, backup: outcome.backup, changes: renderMessages(outcome.changes, t),
-        ...(outcome.applied ? {} : { reason: outcome.reason }) }, null, 2));
+        ...(outcome.applied ? {} : { reason: renderMessages(outcome.reason, t) }) }, null, 2));
     } catch (error) {
       console.error(t('cli.error.configMigrateApply', { error: Array.isArray(error.issues) ? renderMessages(error.issues, t).join(t('cli.listSep')) : error.message }));
       process.exitCode = 1;
