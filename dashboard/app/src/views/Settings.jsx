@@ -20,15 +20,17 @@ const { Text } = Typography;
 //   3. 只读展示宿主绑定状态与 Obsidian 检测结果，并说明写入后哪些进程需要重启。
 // 宿主绑定要改写其他应用的配置文件，所以这里只给命令、不执行；也不会自动重启任何进程。
 
-const OBSIDIAN_GUIDE = [
-  'Obsidian 是**可选**的：默认的 `filesystem` 后端直接把笔记写成文件，不需要 Obsidian 参与。',
+// The guide is a function of the translator rather than a constant: it is Markdown prose rendered by
+// a component, and it stays module-level because the component only consumes it.
+const obsidianGuide = (t) => [
+  t('settings.guide.optional'),
   '',
-  '想让 Obsidian 一起工作（CLI 读取与读回校验）时：',
+  t('settings.guide.intro'),
   '',
-  '1. 到[官方下载页](https://obsidian.md/download)安装 Obsidian —— 这里只会打开下载页，本页不会安装任何软件。',
-  '2. 在 Obsidian 里新建或打开一个库（vault），记下库名。',
-  '3. 装好 Obsidian CLI 后，把可执行文件的绝对路径填进 `obsidianCli`，库名填进 `vaultName`。',
-  '4. 把「存储后端」改成 `obsidian-cli` 再保存；缺任一项都会被拒绝写入。',
+  t('settings.guide.step1'),
+  t('settings.guide.step2'),
+  t('settings.guide.step3'),
+  t('settings.guide.step4'),
 ].join('\n');
 
 // The translator is passed in because this is a plain function, not a component, and so has no hook.
@@ -69,6 +71,7 @@ function RestartNotice({ restart }) {
 }
 
 function ObsidianGuide({ obsidian }) {
+  const { t } = useI18n();
   if (!obsidian) return null;
   const rows = obsidian.detected ?? [];
   const found = rows.filter((row) => row.exists);
@@ -77,19 +80,19 @@ function ObsidianGuide({ obsidian }) {
       <Alert
         type={obsidian.installed ? 'success' : 'info'}
         showIcon
-        message={obsidian.installed ? '检测到 Obsidian（或配置里的 obsidianCli）' : '没有检测到 Obsidian'}
+        message={obsidian.installed ? t('settings.detected') : t('settings.notDetected')}
         description={(
           <div>
             <div>
               {obsidian.installed
-                ? '检测只说明“看起来装过”，不代表 CLI 一定能用；真要用 obsidian-cli 后端，请把 CLI 路径指准。'
-                : '没有检测到也不影响使用：默认的文件系统后端完全不需要 Obsidian。想用再按下面的步骤装。'}
+                ? t('settings.detectCaveat')
+                : t('settings.detectNoImpact')}
             </div>
             {!!found.length && (
               <ul className="settings-paths">
                 {found.map((row) => (
                   <li key={row.path}>
-                    <Tag color="green">存在</Tag>
+                    <Tag color="green">{t('settings.exists')}</Tag>
                     <span className="muted">{row.label}</span>{' '}
                     <Text className="mono" type="secondary">{row.path}</Text>
                   </li>
@@ -100,14 +103,14 @@ function ObsidianGuide({ obsidian }) {
         )}
       />
       <div style={{ marginTop: 10 }}>
-        <Markdown>{OBSIDIAN_GUIDE}</Markdown>
+        <Markdown>{obsidianGuide(t)}</Markdown>
       </div>
       <details className="settings-details">
-        <summary className="muted">查看全部检测位置（{rows.length}）</summary>
+        <summary className="muted">{t('settings.detectedPaths', { n: rows.length })}</summary>
         <ul className="settings-paths">
           {rows.map((row) => (
             <li key={row.path}>
-              <Tag color={row.exists ? 'green' : 'default'}>{row.exists ? '存在' : '未找到'}</Tag>
+              <Tag color={row.exists ? 'green' : 'default'}>{row.exists ? t('settings.exists') : t('settings.notFound')}</Tag>
               <span className="muted">{row.label}</span>{' '}
               <Text className="mono" type="secondary">{row.path}</Text>
             </li>
