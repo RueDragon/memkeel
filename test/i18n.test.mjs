@@ -51,7 +51,8 @@ for (const [relative, text] of sources) {
 // Ratchet: the number of hardcoded Chinese literals outside the catalogue, of which the four wire
 // markers in lib/chat.js are exempt data rather than translatable text, so the effective floor is 4
 // and not 0. Lowering this is the remaining UX-01 work — 453 when the ratchet was introduced, then
-// 418, 394, 352, 331, 320, 310, 302, 295, 294, 293, and 292 after the chat bubbles — and raising it
+// 418, 394, 352, 331, 320, 310, 302, 295, 294, 293, and 292 after the chat bubbles. It kept falling as
+// later pages were converted; the last three blocks took it to 55, then 37, then 28 — and raising it
 // means a new string was written into a component instead of into the catalogue, which is the
 // regression this guards. The failure message names the largest remaining files.
 //
@@ -59,7 +60,14 @@ for (const [relative, text] of sources) {
 // to it. Converting components/ChatBubbles.jsx moved the count by 1 while it actually removed three
 // pieces of Chinese — two of them were <span>我</span>, bare JSX text. The number below is therefore a
 // floor, not the full remainder, and the same class of text still has to be found by reading.
-const HARDCODED_BUDGET = 37;
+//
+// KNOWN OVERCOUNT: the delimiter class allows any character except the delimiter itself, so on a line
+// that carries two attribute values there is nothing stopping a match from starting at the closing
+// quote of the first and ending at the opening quote of the second. Chinese JSX text sitting between
+// two attribute quotes is therefore counted as a literal. Removing the first-run step whose line held
+// two className attributes lowered this count by one more than the number of real strings deleted.
+// Do not paste such a line into a comment either: it would be counted here as well.
+const HARDCODED_BUDGET = 28;
 
 test('every locale defines exactly the same keys', () => {
   const expected = Object.keys(MESSAGES[DEFAULT_LOCALE]).sort();
@@ -177,7 +185,7 @@ test('every converted file is free of Chinese in JSX text', () => {
 // literal count above suggested — views/Settings.jsx alone renders 814 characters of Chinese prose
 // directly as JSX text while holding only 70 quoted literals, so the remaining work is dominated by
 // paragraphs written inline, not by short labels. Every converted file already measures zero here.
-const JSX_TEXT_BUDGET = 447;
+const JSX_TEXT_BUDGET = 158;
 
 test('Chinese rendered as JSX text outside the catalogue does not exceed its recorded budget', () => {
   const worst = [...jsxCounts].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([file, n]) => `${file}:${n}`);
