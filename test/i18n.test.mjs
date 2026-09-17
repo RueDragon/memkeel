@@ -59,7 +59,7 @@ for (const [relative, text] of sources) {
 // to it. Converting components/ChatBubbles.jsx moved the count by 1 while it actually removed three
 // pieces of Chinese — two of them were <span>我</span>, bare JSX text. The number below is therefore a
 // floor, not the full remainder, and the same class of text still has to be found by reading.
-const HARDCODED_BUDGET = 138;
+const HARDCODED_BUDGET = 74;
 
 test('every locale defines exactly the same keys', () => {
   const expected = Object.keys(MESSAGES[DEFAULT_LOCALE]).sort();
@@ -114,6 +114,7 @@ const CONVERTED = [
   'components/ComposeModal.jsx',
   'components/DataTable.jsx',
   'components/DecisionModal.jsx',
+  'components/DetailDrawer.jsx',
   'components/EditModal.jsx',
   'components/Links.jsx',
   'components/ScrollToTop.jsx',
@@ -176,7 +177,7 @@ test('every converted file is free of Chinese in JSX text', () => {
 // literal count above suggested — views/Settings.jsx alone renders 814 characters of Chinese prose
 // directly as JSX text while holding only 70 quoted literals, so the remaining work is dominated by
 // paragraphs written inline, not by short labels. Every converted file already measures zero here.
-const JSX_TEXT_BUDGET = 888;
+const JSX_TEXT_BUDGET = 814;
 
 test('Chinese rendered as JSX text outside the catalogue does not exceed its recorded budget', () => {
   const worst = [...jsxCounts].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([file, n]) => `${file}:${n}`);
