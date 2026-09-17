@@ -4,22 +4,28 @@ import { RightOutlined } from '@ant-design/icons';
 import LazyChart from '../components/LazyChart.jsx';
 import { spotOnMove } from '../lib/spotlight.js';
 import { eventSummary } from '../lib/events.js';
+import { useI18n } from '../i18n/index.jsx';
 
-const LIFE_LABEL = { hot: '热', warm: '温', retained: '保留', dormant: '休眠', closed: '关闭' };
-
-function ago(iso) {
+// The relative-time helper takes a translator rather than closing over one: it is a module-level
+// function, so it has no hook to read, and it is called from two places in the render.
+function ago(iso, t) {
   if (!iso) return '';
   const ms = Date.now() - Date.parse(iso);
   if (Number.isNaN(ms)) return '';
   const h = Math.floor(ms / 3.6e6);
-  if (h < 1) return '刚刚';
-  if (h < 24) return `${h} 小时前`;
+  if (h < 1) return t('ago.justNow');
+  if (h < 24) return t('ago.hours', { h });
   const d = Math.floor(h / 24);
-  return `${d} 天前`;
+  return t('ago.days', { d });
 }
 
 export default function Overview({ model, openDetail, onNavigate }) {
-  if (!model) return <Empty description="暂无数据" />;
+  const { t } = useI18n();
+  const LIFE_LABEL = {
+    hot: t('life.hot'), warm: t('life.warm'), retained: t('life.retained'),
+    dormant: t('life.dormant'), closed: t('life.closed'),
+  };
+  if (!model) return <Empty description={t('ov.empty')} />;
   const { status, facts, contexts, experiences, habits, candidates, actions, conflicts, events, routes, topics } = model;
 
   const openActions = actions.filter((a) => a.status === 'open');
@@ -52,14 +58,16 @@ export default function Overview({ model, openDetail, onNavigate }) {
       type: 'pie', radius: ['52%', '72%'], center: ['50%', '42%'],
       avoidLabelOverlap: true, itemStyle: { borderColor: '#fff', borderWidth: 2 }, label: { show: false },
       data: [
-        { name: '长期事实', value: facts.length, target: 'facts' },
-        { name: '短期上下文', value: contexts.length, target: 'contexts' },
-        { name: '执行经验', value: experiences.length, target: 'experiences' },
-        { name: '已确认习惯', value: habits.length, target: 'habits' },
-        { name: '候选习惯', value: candidates.length, target: 'habits' },
+        { name: t('search.kind.fact'), value: facts.length, target: 'facts' },
+        { name: t('search.kind.context'), value: contexts.length, target: 'contexts' },
+        { name: t('search.kind.experience'), value: experiences.length, target: 'experiences' },
+        { name: t('ov.confirmedHabits'), value: habits.length, target: 'habits' },
+        { name: t('ov.candidateHabits'), value: candidates.length, target: 'habits' },
       ].filter((d) => d.value > 0),
     }],
-  }), [facts.length, contexts.length, experiences.length, habits.length, candidates.length]);
+    // t is a dependency because these labels are translated: without it a language switch would leave
+    // the chart named in the previous language, since the memo would not re-run.
+  }), [facts.length, contexts.length, experiences.length, habits.length, candidates.length, t]);
 
   const lifecycle = useMemo(() => {
     const counts = {};
@@ -87,7 +95,7 @@ export default function Overview({ model, openDetail, onNavigate }) {
         data: keys.map((k) => counts[k]),
       }],
     };
-  }, [contexts, experiences]);
+  }, [contexts, experiences, t]);
 
   // Chart clicks navigate to the owning tab, which turns the charts from decoration
   // into entry points.
@@ -97,10 +105,10 @@ export default function Overview({ model, openDetail, onNavigate }) {
   };
 
   const trackColumns = [
-    { title: '工作区', dataIndex: 'workspace', render: (v) => <Tag color="blue">{v}</Tag> },
-    { title: '追踪中', dataIndex: 'recent', width: 100, render: (v, r) => (v > 0 ? <Tag color="green">{v} 条近 7 天</Tag> : <span className="muted">近 7 天无更新</span>) },
-    { title: '上下文总数', dataIndex: 'total', width: 110 },
-    { title: '最近更新', dataIndex: 'latest', width: 130, render: (v) => <span className="muted">{ago(v)}</span> },
+    { title: t('col.workspace'), dataIndex: 'workspace', render: (v) => <Tag color="blue">{v}</Tag> },
+    { title: t('ov.col.tracking'), dataIndex: 'recent', width: 100, render: (v, r) => (v > 0 ? <Tag color="green">{t('ov.recent', { v })}</Tag> : <span className="muted">{t('ov.noRecent')}</span>) },
+    { title: t('ov.col.contextsTotal'), dataIndex: 'total', width: 110 },
+    { title: t('ov.col.latest'), dataIndex: 'latest', width: 130, render: (v) => <span className="muted">{ago(v, t)}</span> },
     { title: '', key: 'go', width: 60, render: () => <RightOutlined className="muted" /> },
   ];
 
@@ -108,42 +116,42 @@ export default function Overview({ model, openDetail, onNavigate }) {
     <div>
       <div className="stat-grid">
         <button className="stat-card clickable" onMouseMove={spotOnMove} onClick={() => onNavigate?.('contexts')}>
-          <div className="label">追踪中的项目</div>
-          <div className="value">{tracking.filter((t) => t.recent > 0).length}</div>
-          <div className="foot">近 7 天有活跃上下文</div>
+          <div className="label">{t('ov.card.tracking')}</div>
+          <div className="value">{tracking.filter((t2) => t2.recent > 0).length}</div>
+          <div className="foot">{t('ov.card.trackingFoot')}</div>
         </button>
         <button className="stat-card clickable" onClick={() => onNavigate?.('facts')}>
-          <div className="label">长期事实</div>
+          <div className="label">{t('search.kind.fact')}</div>
           <div className="value">{status.facts}</div>
-          <div className="foot">由事件归约</div>
+          <div className="foot">{t('ov.card.factsFoot')}</div>
         </button>
         <button className="stat-card clickable" onClick={() => onNavigate?.('habits')}>
-          <div className="label">已确认习惯</div>
+          <div className="label">{t('ov.confirmedHabits')}</div>
           <div className="value">{habits.length}</div>
-          <div className="foot">候选 {candidates.length}</div>
+          <div className="foot">{t('ov.card.candidatesFoot', { n: candidates.length })}</div>
         </button>
         <button className="stat-card clickable" onClick={() => onNavigate?.('actions')}>
-          <div className="label">未完成待办</div>
+          <div className="label">{t('ov.openActions')}</div>
           <div className="value">{openActions.length}</div>
-          <div className="foot">共 {actions.length} 条</div>
+          <div className="foot">{t('ov.card.actionsFoot', { n: actions.length })}</div>
         </button>
         <button className={`stat-card clickable${conflicts.length ? ' alert' : ''}`} onMouseMove={spotOnMove} onClick={() => onNavigate?.('conflicts')}>
-          <div className="label">未解决冲突</div>
+          <div className="label">{t('sys.conflicts')}</div>
           <div className="value">{conflicts.length}</div>
-          <div className="foot">需要人工澄清</div>
+          <div className="foot">{t('ov.card.conflictsFoot')}</div>
         </button>
         <button className="stat-card clickable" onClick={() => onNavigate?.('events')}>
-          <div className="label">事件</div>
+          <div className="label">{t('search.kind.event')}</div>
           <div className="value">{status.events}</div>
-          <div className="foot">不可变日志</div>
+          <div className="foot">{t('ov.card.eventsFoot')}</div>
         </button>
       </div>
 
       <div className="chart-grid">
         <div className="panel">
-          <h3 className="panel-title">正在追踪的项目</h3>
+          <h3 className="panel-title">{t('ov.section.tracking')}</h3>
           {tracking.length === 0
-            ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无短期上下文" style={{ padding: 40 }} />
+            ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('ov.emptyTracking')} style={{ padding: 40 }} />
             : (
               <Table
                 size="small"
@@ -156,22 +164,22 @@ export default function Overview({ model, openDetail, onNavigate }) {
             )}
         </div>
         <div className="panel">
-          <h3 className="panel-title">生命周期分布（近 7 天）</h3>
+          <h3 className="panel-title">{t('ov.section.lifecycle')}</h3>
           {contexts.length + experiences.length === 0
-            ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无短期记忆" style={{ padding: 40 }} />
+            ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('ov.emptyLifecycle')} style={{ padding: 40 }} />
             : <LazyChart option={lifecycle} height={260} />}
         </div>
       </div>
 
       <div className="chart-grid" style={{ marginTop: 12 }}>
         <div className="panel">
-          <h3 className="panel-title">记忆构成（点击跳转）</h3>
+          <h3 className="panel-title">{t('ov.section.composition')}</h3>
           <LazyChart option={composition} height={240} onEvents={{ click: onCompositionClick }} />
         </div>
         <div className="panel">
-          <h3 className="panel-title">已确认习惯</h3>
+          <h3 className="panel-title">{t('ov.confirmedHabits')}</h3>
           {habits.length === 0
-            ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无已确认习惯" style={{ padding: 40 }} />
+            ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('ov.emptyHabits')} style={{ padding: 40 }} />
             : (
               <ul className="habit-preview">
                 {habits.slice(0, 6).map((h) => (
@@ -182,7 +190,7 @@ export default function Overview({ model, openDetail, onNavigate }) {
                 ))}
                 {habits.length > 6 && (
                   <li className="more" onClick={() => onNavigate?.('habits')}>
-                    还有 {habits.length - 6} 条 <RightOutlined />
+                     {t('ov.more', { n: habits.length - 6 })} <RightOutlined />
                   </li>
                 )}
               </ul>
@@ -192,9 +200,9 @@ export default function Overview({ model, openDetail, onNavigate }) {
 
       <div className="chart-grid" style={{ marginTop: 12 }}>
         <div className="panel">
-          <h3 className="panel-title">未完成待办</h3>
+          <h3 className="panel-title">{t('ov.openActions')}</h3>
           {openActions.length === 0
-            ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有未完成待办" style={{ padding: 32 }} />
+            ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('ov.emptyActions')} style={{ padding: 32 }} />
             : (
               <ul className="habit-preview">
                 {openActions.slice(0, 6).map((a) => (
@@ -205,24 +213,26 @@ export default function Overview({ model, openDetail, onNavigate }) {
                 ))}
                 {openActions.length > 6 && (
                   <li className="more" onClick={() => onNavigate?.('actions')}>
-                    还有 {openActions.length - 6} 条 <RightOutlined />
+                     {t('ov.more', { n: openActions.length - 6 })} <RightOutlined />
                   </li>
                 )}
               </ul>
             )}
         </div>
         <div className="panel">
-          <h3 className="panel-title">最近事件</h3>
+          <h3 className="panel-title">{t('ov.section.recentEvents')}</h3>
           <ul className="habit-preview">
             {events.slice(0, 6).map((e) => {
               // A journal event is a container: the readable line has to be derived from
               // whichever payload it carries, otherwise the row shows only a tag.
-              const summary = eventSummary(e);
+              // The translator is passed through so the summary follows the language switch; without
+              // it eventSummary falls back to the default locale.
+              const summary = eventSummary(e, undefined, t);
               return (
                 <li key={e.event_id} onClick={() => openDetail('event', e.event_id)}>
                   <Tag>{e.workspace}</Tag>
-                  <span className={summary ? 'event-preview' : 'muted'}>{summary || '（无摘要，点开查看）'}</span>
-                  <span className="muted nowrap">{ago(e.occurred_at)}</span>
+                  <span className={summary ? 'event-preview' : 'muted'}>{summary || t('ov.noSummary')}</span>
+                  <span className="muted nowrap">{ago(e.occurred_at, t)}</span>
                 </li>
               );
             })}
