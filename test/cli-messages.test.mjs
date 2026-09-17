@@ -132,6 +132,8 @@ test('renderMessages resolves references and leaves anything else alone', () => 
     nested: { deep: msg('cli.cleanup.outsideHome') },
     // A plain object that happens to have a key field is data, not a reference, so the prefix matters.
     lookalike: { key: 'not-a-cli-key' },
+    // A non-plain object must survive untouched: rebuilding it from its entries would empty it.
+    when: new Date('2026-01-02T03:04:05.000Z'),
     count: 7,
   }, t);
   assert.match(rendered.sentence, /^Read-only plan: no file was deleted\./);
@@ -139,6 +141,7 @@ test('renderMessages resolves references and leaves anything else alone', () => 
   assert.equal(rendered.data, 'untouched');
   assert.equal(rendered.nested.deep, 'the target is outside the memory home');
   assert.deepEqual(rendered.lookalike, { key: 'not-a-cli-key' });
+  assert.ok(rendered.when instanceof Date && rendered.when.toISOString() === '2026-01-02T03:04:05.000Z');
   assert.equal(rendered.count, 7);
 });
 
