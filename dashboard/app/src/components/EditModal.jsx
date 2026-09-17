@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Form, Input, Alert, Radio, App as AntApp } from 'antd';
 import { previewRevision } from '../lib/api.js';
+import { useI18n } from '../i18n/index.jsx';
 
 // One editor for every memory type. It never edits Markdown or rewrites an event:
 // it appends a superseding event. `mode` picks the preview route, and the retire
@@ -9,6 +10,7 @@ import { previewRevision } from '../lib/api.js';
 // The original record is immutable, so the UI is explicit about that: the helper text
 // states that history is preserved and that this creates a new revision.
 export default function EditModal({ open, onClose, target, onSaved }) {
+  const { t } = useI18n();
   const { message } = AntApp.useApp();
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
@@ -21,7 +23,14 @@ export default function EditModal({ open, onClose, target, onSaved }) {
   }, [open, target, form]);
 
   if (!target) return null;
-  const typeLabel = { fact: '长期记忆', context: '短期记忆', experience: '执行经验', action: '待办' }[target.type] ?? target.type;
+  // The four memory-type names are taken from the navigation catalogue rather than kept a second
+  // time here, so a type is spelled the same way in the sidebar, the header and this dialog.
+  const typeLabel = {
+    fact: t('nav.facts.label'), context: t('nav.contexts.label'),
+    experience: t('nav.experiences.label'), action: t('nav.actions.label'),
+  }[target.type] ?? target.type;
+  const retireVerb = t('action.retire');
+  const reviseVerb = t('action.revise');
 
   const submit = async () => {
     const values = await form.validateFields();
@@ -35,21 +44,21 @@ export default function EditModal({ open, onClose, target, onSaved }) {
         expectedEvent: target.eventId,
       });
       Modal.confirm({
-        title: retire ? `停用${typeLabel}` : `修正${typeLabel}`,
+        title: `${retire ? retireVerb : reviseVerb}${typeLabel}`,
         content: (
           <div>
             <Alert type={retire ? 'warning' : 'info'} showIcon message={preview.plan.summary} style={{ marginBottom: 10 }} />
             <div className="muted">
-              将追加一条新的不可变事件并用它替代当前值；原记录仍保留在事件流中，可追溯。
+              {t('edit.appendNote')}
             </div>
           </div>
         ),
-        okText: retire ? '确认停用' : '确认修正',
-        cancelText: '取消',
+        okText: retire ? t('edit.confirmRetire') : t('edit.confirmRevise'),
+        cancelText: t('decision.cancel'),
         okButtonProps: { danger: retire },
         onOk: async () => {
           await execute();
-          message.success(retire ? '已停用' : '已修正');
+          message.success(retire ? t('edit.retired') : t('edit.revised'));
           onSaved?.();
           onClose();
         },
@@ -64,11 +73,11 @@ export default function EditModal({ open, onClose, target, onSaved }) {
   return (
     <Modal
       open={open}
-      title={`${intent === 'retire' ? '停用' : '修正'}${typeLabel}`}
+      title={`${intent === 'retire' ? retireVerb : reviseVerb}${typeLabel}`}
       onCancel={onClose}
       onOk={submit}
-      okText={intent === 'retire' ? '停用' : '预览修正'}
-      cancelText="取消"
+      okText={intent === 'retire' ? retireVerb : t('edit.previewRevise')}
+      cancelText={t('decision.cancel')}
       confirmLoading={busy}
       width={620}
       destroyOnClose
@@ -77,21 +86,21 @@ export default function EditModal({ open, onClose, target, onSaved }) {
         type="info"
         showIcon
         style={{ marginBottom: 14 }}
-        message="不会修改或删除原记录。保存时会追加一条新事件，并用它覆盖当前值。"
+        message={t('edit.immutableNotice')}
       />
       <Form form={form} layout="vertical">
-        <Form.Item label="操作" name="intent">
+        <Form.Item label={t('col.ops')} name="intent">
           <Radio.Group value={intent} onChange={(e) => setIntent(e.target.value)} optionType="button">
-            <Radio.Button value="revise">修正内容</Radio.Button>
-            <Radio.Button value="retire">停用（从当前视图移除）</Radio.Button>
+            <Radio.Button value="revise">{t('edit.reviseContent')}</Radio.Button>
+            <Radio.Button value="retire">{t('edit.retireOption')}</Radio.Button>
           </Radio.Group>
         </Form.Item>
         {intent === 'revise' ? (
-          <Form.Item label="新的内容" name="text" rules={[{ required: true, message: '请输入新内容' }]}>
-            <Input.TextArea rows={4} placeholder="修订后的结论" />
+          <Form.Item label={t('edit.newContent')} name="text" rules={[{ required: true, message: t('edit.contentRequired') }]}>
+            <Input.TextArea rows={4} placeholder={t('edit.contentPlaceholder')} />
           </Form.Item>
         ) : (
-          <Alert type="warning" showIcon message="停用后该记录不再出现在当前视图，历史与来源事件仍然保留。" />
+          <Alert type="warning" showIcon message={t('edit.retireNotice')} />
         )}
       </Form>
     </Modal>
