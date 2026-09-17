@@ -491,7 +491,7 @@ export default function Settings({ reload }) {
         <h3 className="panel-title">{t('settings.storage.title')}</h3>
         <div>
           <Row gutter={16}>
-            <Col span={8}>
+            <Col xs={24} md={8}>
               <Form.Item
                 name="storage"
                 label={t('settings.storage.backend')}
@@ -501,7 +501,7 @@ export default function Settings({ reload }) {
                 <Select options={shared(settings.storageOptions ?? [])} />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} md={8}>
               <Form.Item
                 name="memoryRoot"
                 label={t('settings.storage.memoryRoot')}
@@ -511,7 +511,7 @@ export default function Settings({ reload }) {
                 <Input className="mono" placeholder="C:/Users/<you>/agent-memory" />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} md={8}>
               <Form.Item
                 name="vaultRoot"
                 label={t('settings.storage.vaultRoot')}
@@ -521,12 +521,12 @@ export default function Settings({ reload }) {
                 <Input className="mono" placeholder="C:/Users/<you>/agent-memory" />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} md={8}>
               <Form.Item name="vaultName" label={t('settings.storage.vaultName')} extra={t('settings.storage.vaultNameExtra')}>
                 <Input placeholder="my-vault" />
               </Form.Item>
             </Col>
-            <Col span={16}>
+            <Col xs={24} md={16}>
               <Form.Item name="obsidianCli" label={t('settings.storage.cli')} extra={t('settings.storage.cliExtra')}>
                 <Input className="mono" placeholder="C:/Users/<you>/bin/obsidian.exe" />
               </Form.Item>
@@ -552,7 +552,7 @@ export default function Settings({ reload }) {
               </Form.Item>
             </Col>
             {shared(settings.roleFields ?? []).map(({ key, label }) => (
-              <Col span={8} key={key}>
+              <Col xs={24} md={8} key={key}>
                 <Form.Item
                   name={['roles', key]}
                   label={t('settings.fieldLabel', { key, label })}
@@ -572,7 +572,7 @@ export default function Settings({ reload }) {
         <div>
           <Row gutter={16}>
             {shared(settings.numberFields ?? []).map((field) => (
-              <Col span={6} key={field.key}>
+              <Col xs={12} md={6} key={field.key}>
                 <Form.Item
                   name={field.key}
                   label={t('settings.fieldLabel', { key: field.key, label: field.label })}
