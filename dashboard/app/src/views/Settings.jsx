@@ -428,31 +428,31 @@ export default function Settings({ reload }) {
             items={[
               {
                 key: 'path',
-                label: '配置文件路径',
+                label: t('settings.config.path'),
                 children: (
                   <Text className="mono" copyable={{ text: settings.configPath }}>{settings.configPath}</Text>
                 ),
               },
               {
                 key: 'exists',
-                label: '文件状态',
+                label: t('settings.config.status'),
                 children: settings.exists
-                  ? <Tag color="green">存在</Tag>
-                  : <Tag color="red">不存在（保存时会创建）</Tag>,
+                  ? <Tag color="green">{t('settings.config.exists')}</Tag>
+                  : <Tag color="red">{t('settings.config.missing')}</Tag>,
               },
               {
                 key: 'state',
-                label: '存储路径校验',
+                label: t('settings.config.validation'),
                 children: validation.ok
-                  ? <Tag icon={<CheckCircleOutlined />} color="green">通过</Tag>
-                  : <Tag icon={<WarningOutlined />} color="red">{validation.issues.length} 项待处理</Tag>,
+                  ? <Tag icon={<CheckCircleOutlined />} color="green">{t('settings.config.passed')}</Tag>
+                  : <Tag icon={<WarningOutlined />} color="red">{t('settings.config.issues', { n: validation.issues.length })}</Tag>,
               },
               {
                 key: 'preserved',
-                label: '本页不改动的键',
+                label: t('settings.unchangedKeysTitle'),
                 children: settings.preservedKeys?.length
-                  ? <span className="mono muted">{settings.preservedKeys.join('、')}</span>
-                  : <span className="muted">无</span>,
+                  ? <span className="mono muted">{settings.preservedKeys.join(t('settings.config.listSep'))}</span>
+                  : <span className="muted">{t('settings.config.none')}</span>,
               },
             ]}
           />
@@ -461,7 +461,7 @@ export default function Settings({ reload }) {
               type="error"
               showIcon
               style={{ marginTop: 10 }}
-              message="当前无法直接读取这个配置文件"
+              message={t('settings.config.readFailed')}
               description={settings.readError}
             />
           )}
@@ -470,7 +470,7 @@ export default function Settings({ reload }) {
               type="warning"
               showIcon
               style={{ marginTop: 10 }}
-              message="当前配置存在问题，保存前必须先修好这几项"
+              message={t('settings.config.invalid')}
               description={(
                 <ul className="settings-paths">
                   {validation.issues.map((row) => <li key={`${row.field}:${row.message}`}>{row.message}</li>)}
@@ -485,15 +485,15 @@ export default function Settings({ reload }) {
       </div>
 
       <div className="panel" style={{ marginTop: 12 }}>
-        <h3 className="panel-title">存储</h3>
+        <h3 className="panel-title">{t('settings.storage.title')}</h3>
         <div>
           <Row gutter={16}>
             <Col span={8}>
               <Form.Item
                 name="storage"
-                label="存储后端 storage"
-                rules={[{ required: true, message: '请选择存储后端' }]}
-                extra="filesystem 直接把笔记写成文件；obsidian-cli 需要额外两个字段。"
+                label={t('settings.storage.backend')}
+                rules={[{ required: true, message: t('settings.storage.choose') }]}
+                extra={t('settings.storage.extra')}
               >
                 <Select options={settings.storageOptions} />
               </Form.Item>
@@ -501,9 +501,9 @@ export default function Settings({ reload }) {
             <Col span={8}>
               <Form.Item
                 name="memoryRoot"
-                label="memoryRoot（记忆库根目录）"
-                rules={[{ required: true, message: '请填写 memoryRoot' }]}
-                extra="记忆库必须放在仓库之外；目录不存在时保存会自动创建。"
+                label={t('settings.storage.memoryRoot')}
+                rules={[{ required: true, message: t('settings.storage.memoryRootRequired') }]}
+                extra={t('settings.storage.memoryRootExtra')}
               >
                 <Input className="mono" placeholder="C:/Users/<you>/agent-memory" />
               </Form.Item>
@@ -511,25 +511,25 @@ export default function Settings({ reload }) {
             <Col span={8}>
               <Form.Item
                 name="vaultRoot"
-                label="vaultRoot（Obsidian 库根目录）"
-                rules={[{ required: true, message: '请填写 vaultRoot' }]}
-                extra="所有笔记路径都相对它解析；和 memoryRoot 相同即可。"
+                label={t('settings.storage.vaultRoot')}
+                rules={[{ required: true, message: t('settings.storage.vaultRootRequired') }]}
+                extra={t('settings.storage.vaultRootExtra')}
               >
                 <Input className="mono" placeholder="C:/Users/<you>/agent-memory" />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="vaultName" label="vaultName（Obsidian 库名称）" extra="用 obsidian-cli 时必填。">
+              <Form.Item name="vaultName" label={t('settings.storage.vaultName')} extra={t('settings.storage.vaultNameExtra')}>
                 <Input placeholder="my-vault" />
               </Form.Item>
             </Col>
             <Col span={16}>
-              <Form.Item name="obsidianCli" label="obsidianCli（Obsidian CLI 可执行文件路径）" extra="用 obsidian-cli 时必填，填绝对路径。">
+              <Form.Item name="obsidianCli" label={t('settings.storage.cli')} extra={t('settings.storage.cliExtra')}>
                 <Input className="mono" placeholder="C:/Users/<you>/bin/obsidian.exe" />
               </Form.Item>
             </Col>
           </Row>
-          <Divider plain style={{ margin: '4px 0 12px' }}>Obsidian（可选）</Divider>
+          <Divider plain style={{ margin: '4px 0 12px' }}>{t('settings.storage.obsidianDivider')}</Divider>
           <ObsidianGuide obsidian={settings.obsidian} />
         </div>
       </div>
