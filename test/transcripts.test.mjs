@@ -15,6 +15,10 @@ process.env.USERPROFILE = home;
 process.env.HOME = home;
 
 const { loadTranscript } = await import('../lib/transcripts.mjs');
+// The reason a transcript cannot be shown travels as a message reference rather than a sentence
+// (the sessions page renders it), so an assertion about the wording renders it the same way.
+const { isMessageReference, makeTranslator, renderMessages } = await import('../lib/messages.mjs');
+const zhText = (value) => renderMessages(value, makeTranslator('zh-Hans'));
 
 function write(file, lines) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -54,14 +58,18 @@ test('claude: reads message.role and nested message.content', () => {
 test('codex: missing session id degrades to an explicit reason, not a throw', () => {
   const result = loadTranscript({ host: 'codex', sessionId: 'does-not-exist', transcriptPath: '', cwd: home });
   assert.equal(result.available, false);
-  assert.match(result.reason, /未找到/);
+  assert.match(zhText(result.reason), /未找到/);
   assert.deepEqual(result.turns, []);
 });
 
 test('unknown host reports a reason instead of throwing', () => {
   const result = loadTranscript({ host: '', sessionId: 'x', transcriptPath: '', cwd: home });
   assert.equal(result.available, false);
-  assert.match(result.reason, /未知宿主/);
+  // The sessions page prints this reason, so it is a reference rather than a sentence: a plain
+  // string here would be a hardcoded language in a payload the page renders.
+  assert.ok(isMessageReference(result.reason), JSON.stringify(result.reason));
+  assert.match(zhText(result.reason), /未知宿主/);
+  assert.match(renderMessages(result.reason, makeTranslator('en')), /Unknown host/);
 });
 
 test('zcode: resolves rollout model-io file (not agents subagent dir) and parses request/response', () => {

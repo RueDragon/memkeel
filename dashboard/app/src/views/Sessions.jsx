@@ -30,7 +30,7 @@ function clamp(text, max = 90) {
 // Renders the host's real on-disk conversation. The summary tab shows what the hook
 // archived; this tab shows the source transcript the summary was derived from.
 function TranscriptView({ loading, data }) {
-  const { t } = useI18n();
+  const { t, shared } = useI18n();
   if (loading) return <div style={{ padding: 40, textAlign: 'center' }}><Spin /></div>;
   if (!data) return null;
   if (!data.available) {
@@ -39,7 +39,7 @@ function TranscriptView({ loading, data }) {
         type="warning"
         showIcon
         message={t('sessions.unreadable')}
-        description={data.reason || t('sessions.unknownReason')}
+        description={shared(data.reason) || t('sessions.unknownReason')}
       />
     );
   }
