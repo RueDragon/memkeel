@@ -99,7 +99,10 @@ export default function App() {
 
   const renderView = () => {
     if (loading && !model) return <PageSkeleton />;
-    if (error && !model) {
+    // The settings page reads its own payload and needs no model, so it renders even when the shared
+    // model failed to load: it is the one place a broken store can be repaired, and hiding it behind
+    // the generic failure below would leave its own, more specific error text and hint unreachable.
+    if (error && !model && view !== 'settings') {
       return (
         <div className="center-box">
           <Empty description={t('shell.loadFailed', { error })} />
