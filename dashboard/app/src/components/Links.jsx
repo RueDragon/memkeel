@@ -1,5 +1,6 @@
 import React from 'react';
 import { Tag, Button } from 'antd';
+import { useI18n } from '../i18n/index.jsx';
 
 // Small navigation primitives shared by every table so a workspace, topic or event
 // reference always behaves the same: click it, land on that record's detail.
@@ -32,7 +33,11 @@ export function TopicLink({ value, openDetail }) {
   );
 }
 
-export function EventLink({ value, openDetail, label = '查看事件' }) {
+export function EventLink({ value, openDetail, label }) {
+  // The default label is resolved here rather than in the parameter list, because a parameter
+  // default cannot call a hook — and it has to be a hook, or the label would not follow the
+  // language switch along with every caller that passes its own label.
+  const { t } = useI18n();
   if (!value) return <span className="muted">—</span>;
   return (
     <Button
@@ -41,7 +46,7 @@ export function EventLink({ value, openDetail, label = '查看事件' }) {
       style={{ padding: 0 }}
       onClick={(e) => { e.stopPropagation(); openDetail('event', value); }}
     >
-      {label}
+      {label ?? t('link.viewEvent')}
     </Button>
   );
 }
