@@ -1027,3 +1027,17 @@ html, body, #root { height: 100%; overflow: hidden; }
 .settings-restart-list li { font-size: 12.5px; line-height: 1.7; color: var(--ink-2); }
 .settings-details { margin-top: 10px; }
 .settings-details > summary { cursor: pointer; font-size: 12px; }
+
+/* A horizontal Descriptions gives its label its natural width and leaves the value whatever is left.
+   Measured at a 360px viewport: the label took 202px and the value 62px - narrower than a single
+   word, so `configSchema` broke into `configSc` / `hema`. Stacking the pair below this width gives
+   the value the whole card, which is how the Store form already behaves.
+   The flex container is `.ant-descriptions-item-container`, not `.ant-descriptions-item`: two earlier
+   attempts targeted the latter and changed nothing, which was read at the time as a specificity
+   problem. It was not - the selector simply never matched. Measured on the real element: the
+   container computes `flex-direction: row` with no stylesheet declaring that property at all, so
+   nothing here needs to out-rank anything. */
+@media (max-width: 560px) {
+  .ant-descriptions-item-container { flex-direction: column; align-items: flex-start; }
+  .ant-descriptions-item-label { width: auto; }
+}
