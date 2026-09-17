@@ -9,16 +9,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Fixed: `localDay` rebuilt an `Intl.DateTimeFormat` on every call, so consolidating a large ledger spent
-  much of its time constructing formatters.** The function created a new formatter per invocation, and
-  `consolidate` called it once per visible event for every pending day, so even a single pending event
-  re-derived the day of the whole ledger. Measured at 8000 events, 8000 `localDay` calls cost 440 ms
-  (about 55 us each) against 11 ms through one shared formatter — a 40x difference. The formatter is now
-  module-level and the daily-digest loop buckets visible events by day in a single pass, so the loop is
-  O(visible + days) instead of O(visible x days). This removes roughly 0.4 s of a 7.3 s
-  single-pending-event `consolidate` at 8000 events; **the remaining cost is not yet attributed** and is
-  listed as open in `PERFORMANCE.md`. The regression test counts formatter constructions instead of
-  asserting a duration, so it cannot become a flaky timing test.
+- **Fixed: `localDay` rebuilt an `Intl.DateTimeFormat` on every call, and consolidating a ledger was
+  spending much of its time constructing formatters.** Measured at 8000 events, 8000 `localDay` calls cost
+  440 ms through a per-call formatter against 11 ms through one shared formatter, and a single
+  `consolidate` made roughly 25,000 such calls, because the projection derives each event's occurrence and
+  recording day as well as the digest loop. The formatter is now module-level. Consolidating 8000 events
+  went from 1936.1 ms to 319.3-511.7 ms with one event pending, and from 19520.0 ms to 736.3-875.7 ms with
+  every event pending, measured on one machine with one harness; the harness is committed as
+  `scripts/perf-consolidate.mjs` so the numbers can be re-measured rather than taken on trust, and the
+  ranges are given because repeated runs of unchanged code differed by up to 1.6x.
+- **The daily-digest loop no longer re-derives every event's day once per pending day.** It was
+  O(visible x days) and is now a single bucketing pass, O(visible + days), which changes what the loop
+  costs as a store accumulates days rather than what it costs at the scale measured here — applying that
+  change alone moves the two rows above by less than their run-to-run spread, and `PERFORMANCE.md` says so
+  instead of claiming it as a second speed-up. The digests produced are unchanged, including the day
+  boundaries, and a test asserts that two pending events on different Shanghai days land in their own
+  digest and never share text.
 - **`scripts/release-check.mjs` and `RELEASE.md`: a release is verified from the artifact.** The check
   runs the gates, packs the tarball into a temporary directory (the repository is never written to),
   asserts the required documents are inside it and the forbidden ones are not, checks the version against

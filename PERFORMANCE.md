@@ -11,7 +11,14 @@ the one thing that has not been done yet is stated as not done.
 node scripts/perf-bench.mjs --events=1000                 # one scale
 node scripts/perf-bench.mjs --all                         # 1k, 10k, 100k
 node scripts/perf-bench.mjs --events=10000 --json=out.json # machine-readable
+node scripts/perf-consolidate.mjs --events=8000           # the two pending shapes of consolidate
+node scripts/perf-consolidate.mjs --events=8000 --profile=out.cpuprofile
 ```
+
+`perf-consolidate` measures the one call whose cost depends less on the store size than on what is
+pending: it settles the store, then times `consolidate` with a single event pending and again with every
+event pending, printing both. `--profile` writes a V8 profile of that call alone, taken through
+`node:inspector`; a whole-process `--cpu-prof` is mostly the generator and buries the call being studied.
 
 The dataset is seeded (`--seed`, default `20260916`), so two runs at the same scale produce the same
 store. Each run creates its own memory home and store; set `MEMKEEL_PERF_ROOT` to place them somewhere
@@ -255,9 +262,57 @@ iteration count is 5 (and 2 for consolidate) and the p95 sits far above the p50 
 listed as unclaimed rather than reported in either direction, and settling them needs repeated runs and
 more iterations, not a re-reading of these numbers.
 
+## Optimisation 5: one formatter for the process, and one pass over the days
+
+`localDay` built a new `Intl.DateTimeFormat` on every call and then threw it away. That looks like a cheap
+line and is not one: 8000 calls cost 440 ms — about 55 us each — against 11 ms through a single shared
+formatter, a 40x difference. It also has more call sites than the digest loop, because the projection
+derives each event's occurrence day and recording day, so one `consolidate` of 8000 events made roughly
+25,000 calls and spent over a second inside the constructor.
+
+The daily-digest loop had a second and independent problem: it filtered the whole visible list once per
+pending day and re-derived every event's day each time, so that loop was O(visible x days) rather than
+O(visible + days). It now buckets the visible events by day in a single pass.
+
+Both changes preserve behaviour: the digests, and the day boundaries, are identical.
+`test/core.test.mjs` pins both directions — two pending events on different Shanghai days must land in
+their own digest and never share text, and `localDay` must construct at most one formatter across 200
+calls. The second is counted rather than timed, so it cannot decay into a flaky duration test, and it was
+confirmed to fail against the previous implementation before being kept.
+
+Measured on one machine, with one harness (`scripts/perf-consolidate.mjs`), 8000 events over 20 distinct
+days in 8 workspaces, against the immediately preceding commit:
+
+| consolidate, 8000 events | before | after (two runs) | |
+| --- | --- | --- | --- |
+| one event pending (one pending day) | 1936.1 ms | **319.3 ms / 511.7 ms** | 3.8-6.1x |
+| every event pending (20 pending days) | 19520.0 ms | **736.3 ms / 875.7 ms** | 22.3-26.5x |
+
+The after column is two runs of the committed harness on unchanged code, and the distance between them —
+1.6x on the one-pending row — is the honest precision of this table. The before column is one run each.
+The before/after gap is several times wider than that spread, so the result holds; the attribution below
+is measured against the same spread and mostly does not.
+
+**The two halves are not equally responsible, and the measurement says so.** Applying only the shared
+formatter, and leaving the O(visible x days) loop in place:
+
+| consolidate, 8000 events | before | formatter only | both |
+| --- | --- | --- | --- |
+| one event pending | 1936.1 ms | **461.4 ms** | 511.7 ms |
+| every event pending | 19520.0 ms | **946.6 ms** | 875.7 ms |
+
+The formatter is the whole of the headline result. The bucketing is a real complexity fix — it removes the
+O(visible x days) term, which is what would grow as a store accumulates days — but at this scale its
+contribution is not separable from the noise, for a reason this table makes concrete: the *same* fixed
+code measured 319.3 ms and 511.7 ms on the one-pending row, a wider gap than the one being attributed, so
+the 461.4 ms formatter-only run and the 511.7 ms both-halves run do not order the two designs. Every row
+is a single run, and at n=1 per variant this comparison cannot support a claim in either direction. It
+would need repeated runs, which is why it is written down as unresolved rather than as a finding — and why
+the changelog attributes the speed-up to the formatter and calls the bucketing a complexity change.
+
 ## What has not been done
 
-**Six optimisations have been made (four in the sections above, two in the list below).**
+**Five optimisations have been made, all of them in the sections above.**
 The plan requires that performance work not change retrieval or reduction semantics, so each step is
 taken on its own with the full suite behind it rather than several at once.
 
@@ -274,20 +329,19 @@ The order to try next, cheapest and safest first:
 3. ~~Cache the journal parse per file.~~ Tried, measured, **reverted** — the parse is ~1% of a replay.
    The measurement that disproved it is in optimisation 3, and it redirected the work to `inside()`.
 4. ~~Resolve the root's real path once instead of per call.~~ Done — 1.5-2.2× across most operations.
-5. `consolidate` has now been profiled and it is the largest single number in this document: at 8000
-   events a single pending event still costs 7286 ms while all of its managed writes total 69 ms, and
-   with every event pending it is 21315 ms against 32 writes totalling 193 ms. Ruling pieces out was the
-   whole result — `reduceEvents` (45.4 → 91.4 ms), `learningBody` (3.0 → 7.1 ms), `preferenceProjection`
-   (0.8 → 0.2 ms), cached `loadEvents` (2.1 → 13.5 ms), per-event `JSON.stringify` (1.8 → 13.8 ms),
-   `consumptionStatus` (35 → 53 ms over 2k → 8k, including hashing every event) and the day loop are all
-   linear and together account for well under 1 s. **About 6.6 s of that 7.3 s is therefore not yet
-   attributed**, and nothing here is claimed that was not measured.
-6. ~~`localDay` rebuilt an `Intl.DateTimeFormat` on every call.~~ **Done** — the only super-linear shape
-   found so far. 8000 calls cost 440 ms (about 55 us each) against 11 ms through one shared formatter
-   (40x), and `consolidate` called it once per visible event *per pending day*, so a single pending event
-   still re-derived the day of the whole ledger. The formatter is now module-level and the day loop
-   buckets in one pass instead of filtering per day. It removes only ~0.4 s of the 7.3 s above, which is
-   exactly why it is reported here and not as a headline result.
+5. **`consolidate` is no longer an unexplained number.** With the formatter fix in place an 8000-event
+   `consolidate` costs 512 ms with one event pending and 876 ms with every event pending, and a profile of
+   that single call — taken with `node:inspector` around the call, because a whole-process `--cpu-prof` is
+   mostly the generator and drowns the signal — puts the remainder in `canonicalJson`, file reads,
+   `stat`/`lstat`, `reduceEvents` and `consumptionStatus`, all of which scale linearly and are each tens
+   of milliseconds.
+6. **Two earlier figures for this call are retired, not restated.** A previous session recorded 7286 ms
+   for the one-pending shape and 21315 ms for the all-pending shape at 8000 events. Neither is
+   reproducible with this harness, whose same-instrument values are 1936 ms and 19520 ms before the fix;
+   the provenance of the older pair cannot be re-established because the scratch harness that produced it
+   is gone. They are therefore dropped from this file rather than carried forward as context, and the
+   numbers above replace them. Recording this is the point: an unattributable number is worse than no
+   number, because later work treats it as a baseline.
 7. What is left of the write path is the per-write full replay itself and `preferenceProjection` over
    every event. Both are O(N) per write and need their own design; `bootstrap` has still not been
    profiled.
