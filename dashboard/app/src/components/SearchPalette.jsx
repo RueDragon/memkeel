@@ -2,11 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Modal, Input, List, Tag, Empty, Spin } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import { previewLine } from '../lib/chat.js';
-
-const KIND_LABEL = {
-  fact: '长期事实', context: '短期上下文', experience: '执行经验',
-  habit: '偏好', action: '待办', event: '事件', workspace: '工作区', topic: '主题',
-};
+import { useI18n } from '../i18n/index.jsx';
 
 const KIND_COLOR = {
   fact: 'blue', context: 'cyan', experience: 'geekblue',
@@ -16,10 +12,19 @@ const KIND_COLOR = {
 // One search box over every memory surface. Results carry their type so a click can
 // route straight to the right detail view, which is what a new user expects.
 export default function SearchPalette({ open, onClose, onPick, searchFn }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState([]);
   const [loading, setLoading] = useState(false);
   const timer = useRef(null);
+
+  // Most of these types are already named elsewhere in the catalogue — an action is "open work" and a
+  // workspace is a workspace — so only the four that are not are defined here.
+  const KIND_LABEL = {
+    fact: t('search.kind.fact'), context: t('search.kind.context'), experience: t('search.kind.experience'),
+    habit: t('kind.preferences'), action: t('kind.actions'), event: t('search.kind.event'),
+    workspace: t('col.workspace'), topic: t('col.topic'),
+  };
 
   useEffect(() => {
     if (!open) { setQuery(''); setHits([]); }
@@ -57,15 +62,15 @@ export default function SearchPalette({ open, onClose, onPick, searchFn }) {
         size="large"
         variant="borderless"
         prefix={<SearchOutlined />}
-        placeholder="搜索事实、上下文、习惯、待办、事件、工作区…"
+        placeholder={t('search.placeholder')}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         style={{ padding: '12px 16px' }}
       />
       <div style={{ maxHeight: 420, overflow: 'auto', borderTop: '1px solid #eceef1' }}>
         {loading ? <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
-          : !query.trim() ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="输入关键词开始搜索" style={{ padding: 28 }} />
-          : hits.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配结果" style={{ padding: 28 }} />
+          : !query.trim() ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('search.prompt')} style={{ padding: 28 }} />
+          : hits.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('search.noResults')} style={{ padding: 28 }} />
           : (
             <List
               dataSource={hits}
