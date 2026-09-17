@@ -20,7 +20,7 @@ function Section({ title, hint, children }) {
 }
 
 export default function DecisionModal({ decision, onClose }) {
-  const { t } = useI18n();
+  const { t, shared } = useI18n();
   const { message } = AntApp.useApp();
   const [quote, setQuote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -34,7 +34,15 @@ export default function DecisionModal({ decision, onClose }) {
     candidate: t('value.candidate'), probationary: t('value.probationary'),
     confirmed: t('value.confirmed'), rejected: t('value.rejected'),
   };
-  const humanValue = (value) => VALUE_LABEL[String(value)] ?? String(value ?? '—');
+  // A value may be a reference from the library - "(not set)" in a configuration change is one -
+  // so it is rendered into the reader's language before it is looked up in the enum vocabulary.
+  const humanValue = (value) => {
+    const rendered = shared(value ?? '—');
+    return VALUE_LABEL[String(rendered)] ?? String(rendered);
+  };
+  // `field` is normally an enum name to look up, but a configuration change carries its own label,
+  // which may itself be a reference.
+  const fieldLabel = (field) => (typeof field === 'string' ? (FIELD_LABEL[field] ?? field) : shared(field));
 
   if (!decision) return null;
   const needsQuote = !!decision.needsQuote;
@@ -49,7 +57,10 @@ export default function DecisionModal({ decision, onClose }) {
       await decision.onConfirm(needsQuote ? quote.trim() : undefined);
       onClose();
     } catch (e) {
-      message.error(e.message);
+      // A refusal carries the issues it was built from as well as a sentence; those render in the
+      // reader's language, which the server cannot choose on the page's behalf.
+      const issues = Array.isArray(e.issues) ? shared(e.issues) : [];
+      message.error(issues.length ? <>{issues.map((line, i) => <div key={i}>{line}</div>)}</> : shared(e.message));
     } finally {
       setBusy(false);
     }
@@ -68,7 +79,7 @@ export default function DecisionModal({ decision, onClose }) {
       okButtonProps={{ disabled: !canSubmit, danger: !!decision.okDanger }}
       destroyOnClose
     >
-      {decision.summary && <Alert type="info" showIcon message={decision.summary} style={{ marginBottom: 14 }} />}
+      {decision.summary && <Alert type="info" showIcon message={shared(decision.summary)} style={{ marginBottom: 14 }} />}
 
       {decision.subject?.text && (
         <Section title={t('decision.subject')}>
@@ -96,7 +107,7 @@ export default function DecisionModal({ decision, onClose }) {
           <ul className="decision-changes">
             {decision.changes.map((change, i) => (
               <li key={i} className="mono">
-                {FIELD_LABEL[change.field] ?? change.field}{t('punct.labelSeparator')}{humanValue(change.from)} → {humanValue(change.to)}
+                {fieldLabel(change.field)}{t('punct.labelSeparator')}{humanValue(change.from)} → {humanValue(change.to)}
               </li>
             ))}
           </ul>

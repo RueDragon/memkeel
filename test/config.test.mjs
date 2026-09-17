@@ -18,6 +18,14 @@ import {
 } from '../lib/config.mjs';
 import { settingsSnapshot } from '../lib/dashboard-data.mjs';
 import { applyLayout } from '../lib/layout.mjs';
+import { makeTranslator, renderMessages } from '../lib/messages.mjs';
+
+// The library reports message references rather than sentences, so an assertion about wording goes
+// through the same renderer the CLI and the settings page use. Rendering in zh-Hans keeps these
+// assertions about the Chinese wording while proving the reference resolves to a real sentence.
+const zhT = makeTranslator('zh-Hans');
+const enT = makeTranslator('en');
+const zh = (value) => renderMessages(value, zhT);
 
 const cli = fileURLToPath(new URL('../memory.mjs', import.meta.url));
 
@@ -132,7 +140,7 @@ for (const [label, patch, expected] of INVALID) {
     const raw = complete(patch);
     const report = validateConfig(raw);
     assert.equal(report.ok, false, `${label} was accepted`);
-    assert.ok(report.issues.some((issue) => expected.test(issue.message)), JSON.stringify(report.issues));
+    assert.ok(report.issues.some((issue) => expected.test(zh(issue.message))), JSON.stringify(report.issues));
   });
 }
 
@@ -140,7 +148,7 @@ test('memoryRoot and vaultRoot must agree, and the ambiguity is never resolved s
   const { root, store, complete } = fixture(t);
   const report = validateConfig(complete({ memoryRoot: store, vaultRoot: path.join(root, 'elsewhere') }));
   assert.equal(report.ok, false);
-  assert.ok(report.issues.some((issue) => issue.field === 'memoryRoot' && /指向不同目录/.test(issue.message)));
+  assert.ok(report.issues.some((issue) => issue.field === 'memoryRoot' && /指向不同目录/.test(zh(issue.message))));
 });
 
 test('memoryRoot is the stated root and vaultRoot is derived from it', (t) => {
@@ -149,7 +157,7 @@ test('memoryRoot is the stated root and vaultRoot is derived from it', (t) => {
   delete onlyMemory.vaultRoot;
   const derived = validateConfig(onlyMemory);
   assert.equal(derived.ok, true, JSON.stringify(derived.issues));
-  assert.ok(derived.notes.some((note) => /vaultRoot 为空/.test(note)));
+  assert.ok(derived.notes.some((note) => /vaultRoot 为空/.test(zh(note))));
 
   // The other direction is a rejection, not a silent guess: note paths resolve against
   // vaultRoot, but the store root has to be stated, and migration is what offers to derive it.
@@ -167,14 +175,14 @@ test('a missing configSchema is a note, not a rejection', (t) => {
   delete raw.configSchema;
   const report = validateConfig(raw);
   assert.equal(report.ok, true, JSON.stringify(report.issues));
-  assert.ok(report.notes.some((note) => /缺少 configSchema/.test(note)));
+  assert.ok(report.notes.some((note) => /缺少 configSchema/.test(zh(note))));
 });
 
 test('an unknown top-level key is preserved and reported, never dropped', (t) => {
   const { complete } = fixture(t);
   const report = validateConfig(complete({ vaultroot: '/typo' }));
   assert.equal(report.ok, true);
-  assert.ok(report.notes.some((note) => /未知字段 vaultroot/.test(note)));
+  assert.ok(report.notes.some((note) => /未知字段 vaultroot/.test(zh(note))));
 });
 
 test('a deprecated flat role key is still read, and reported', (t) => {
@@ -183,7 +191,7 @@ test('a deprecated flat role key is still read, and reported', (t) => {
   delete raw.roles.habitsNote;
   const report = validateConfig(raw);
   assert.equal(report.ok, true, JSON.stringify(report.issues));
-  assert.ok(report.notes.some((note) => /habitsNote 是旧写法/.test(note)));
+  assert.ok(report.notes.some((note) => /habitsNote 是旧写法/.test(zh(note))));
   // Compatible reading is the point: the runtime resolves the old spelling.
   assert.equal(applyLayout(raw).roles.habitsNote, 'legacy-habits.md');
 });
@@ -214,12 +222,14 @@ test('the CLI and the settings page reach the same verdict on the same file', (t
   const { home, write, complete } = fixture(t);
   for (const raw of [complete(), complete({ layout: 'nope' }), complete({ activeLimit: 0 })]) {
     write(raw);
-    const cliReport = JSON.parse(spawnSync(process.execPath, [cli, 'config', 'validate', '--home', home], { encoding: 'utf8', windowsHide: true }).stdout);
+    // The locale is pinned rather than inherited: the CLI answers in the language the environment
+    // asks for, so a machine set to Chinese would otherwise render these issues in Chinese.
+    const cliReport = JSON.parse(spawnSync(process.execPath, [cli, 'config', 'validate', '--home', home], { encoding: 'utf8', windowsHide: true, env: { ...process.env, MEMKEEL_LOCALE: 'en' } }).stdout);
     // The console validates the file it is editing through the same function the CLI uses.
     const page = settingsSnapshot({ policyRoot: home, vaultRoot: raw.vaultRoot, roles: raw.roles, topics: [] }, { home: os.homedir(), env: {} });
     assert.equal(cliReport.ok, page.validation.ok, `CLI and console disagreed for ${JSON.stringify(raw.layout ?? '')}`);
     assert.equal(cliReport.ok, validateConfig(raw).ok);
-    assert.deepEqual(cliReport.issues, inspectConfigGroups(raw, { createRoots: false }).issues);
+    assert.deepEqual(cliReport.issues, renderMessages(inspectConfigGroups(raw, { createRoots: false }).issues, enT));
   }
 });
 
@@ -446,7 +456,7 @@ test('apply refuses to write a migration whose result would be invalid', (t) => 
   write(legacyDocument(complete({ layout: 'not-a-layout' })));
   const before = fs.readFileSync(path.join(home, 'config.json'), 'utf8');
   assert.throws(() => applyConfigMigration(home), (error) => {
-    assert.match(error.message, /校验未通过/);
+    assert.match(error.message, /does not validate/);
     // The refusal carries the issues themselves as well as the sentence built from them, which is what
     // lets a caller word them in the reader's own language.
     assert.ok(Array.isArray(error.issues) && error.issues.length > 0,

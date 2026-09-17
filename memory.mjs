@@ -87,7 +87,10 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
     process.exitCode = 1;
   } else if (action === 'validate') {
     const report = validateConfig(raw);
-    console.log(JSON.stringify({ ...base, schemaVersion: CONFIG_SCHEMA_VERSION, ok: report.ok, issues: report.issues, notes: report.notes }, null, 2));
+    // The validator reports message references rather than sentences, so the language is chosen
+    // here, once, instead of being decided by whichever module happened to build the issue.
+    const rendered = renderMessages({ issues: report.issues, notes: report.notes }, t);
+    console.log(JSON.stringify({ ...base, schemaVersion: CONFIG_SCHEMA_VERSION, ok: report.ok, issues: rendered.issues, notes: rendered.notes }, null, 2));
     if (!report.ok) process.exitCode = 1;
   } else if (action === 'show') {
     const view = effectiveConfigView(raw, { revealPaths: Boolean(options['reveal-paths']) });
@@ -101,7 +104,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
     try {
       const outcome = applyConfigMigration(policyRoot);
       console.log(JSON.stringify({ ...base, fromSchema: raw.configSchema ?? null, toSchema: CONFIG_SCHEMA_VERSION,
-        applied: outcome.applied, backup: outcome.backup, changes: outcome.changes,
+        applied: outcome.applied, backup: outcome.backup, changes: renderMessages(outcome.changes, t),
         ...(outcome.applied ? {} : { reason: outcome.reason }) }, null, 2));
     } catch (error) {
       console.error(t('cli.error.configMigrateApply', { error: Array.isArray(error.issues) ? renderMessages(error.issues, t).join(t('cli.listSep')) : error.message }));
@@ -109,7 +112,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
     }
   } else {
     const plan = planConfigMigration(raw);
-    console.log(JSON.stringify({ ...base, fromSchema: plan.fromSchema, toSchema: plan.toSchema, changes: plan.changes,
+    console.log(JSON.stringify({ ...base, fromSchema: plan.fromSchema, toSchema: plan.toSchema, changes: renderMessages(plan.changes, t),
       applied: false, dryRun: true, note: t('cli.config.migratePlan') }, null, 2));
   }
 } else if (command === 'privacy') {

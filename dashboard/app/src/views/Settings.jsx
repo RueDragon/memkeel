@@ -126,13 +126,13 @@ function ObsidianGuide({ obsidian }) {
 // 来源由后端 provenance 给出，页面不自己判断，也不在这里编造默认值（若干回退是散文式描述而非单一字面量，
 // 在下游再写一份数字就会和校验器形成第二个真相源）。
 function ProvenanceList({ settings }) {
-  const { t } = useI18n();
+  const { t, shared } = useI18n();
   const provenance = settings?.provenance;
   if (!provenance) return null;
   const rows = [
     ...['storage', 'memoryRoot', 'vaultRoot', 'vaultName', 'obsidianCli', 'layout'].map((key) => [key, key]),
-    ...(settings.numberFields ?? []).map((field) => [field.key, t('settings.fieldLabel', { key: field.key, label: field.label })]),
-    ...(settings.roleFields ?? []).map((field) => [`roles.${field.key}`, t('settings.fieldLabel', { key: field.key, label: field.label })]),
+    ...(settings.numberFields ?? []).map((field) => [field.key, t('settings.fieldLabel', { key: field.key, label: shared(field.label) })]),
+    ...(settings.roleFields ?? []).map((field) => [`roles.${field.key}`, t('settings.fieldLabel', { key: field.key, label: shared(field.label) })]),
   ];
   const valueOf = (key) => (key.startsWith('roles.')
     ? settings.groups?.roles?.[key.slice('roles.'.length)]
@@ -332,7 +332,10 @@ export default function Settings({ reload }) {
         },
       });
     } catch (e) {
-      message.error(e.message);
+      // A refusal carries the issues it was built from as well as a sentence; those render in the
+      // reader's language, which the server cannot choose on the page's behalf.
+      const issues = Array.isArray(e.issues) ? shared(e.issues) : [];
+      message.error(issues.length ? <>{issues.map((line, i) => <div key={i}>{line}</div>)}</> : shared(e.message));
     } finally {
       setBusy(false);
     }
@@ -473,13 +476,13 @@ export default function Settings({ reload }) {
               message={t('settings.config.invalid')}
               description={(
                 <ul className="settings-paths">
-                  {validation.issues.map((row) => <li key={`${row.field}:${row.message}`}>{row.message}</li>)}
+                  {shared(validation.issues ?? []).map((row) => <li key={`${row.field}:${row.message}`}>{row.message}</li>)}
                 </ul>
               )}
             />
           )}
           {!!validation.notes?.length && (
-            <div className="muted" style={{ marginTop: 8 }}>{validation.notes.join(' ')}</div>
+            <div className="muted" style={{ marginTop: 8 }}>{shared(validation.notes ?? []).join(' ')}</div>
           )}
         </div>
       </div>
@@ -495,7 +498,7 @@ export default function Settings({ reload }) {
                 rules={[{ required: true, message: t('settings.storage.choose') }]}
                 extra={t('settings.storage.extra')}
               >
-                <Select options={settings.storageOptions} />
+                <Select options={shared(settings.storageOptions ?? [])} />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -545,10 +548,10 @@ export default function Settings({ reload }) {
                 rules={[{ required: true, message: t('settings.layout.choose') }]}
                 extra={t('settings.layout.extra')}
               >
-                <Select options={settings.layoutOptions} />
+                <Select options={shared(settings.layoutOptions ?? [])} />
               </Form.Item>
             </Col>
-            {(settings.roleFields ?? []).map(({ key, label }) => (
+            {shared(settings.roleFields ?? []).map(({ key, label }) => (
               <Col span={8} key={key}>
                 <Form.Item
                   name={['roles', key]}
@@ -568,7 +571,7 @@ export default function Settings({ reload }) {
         <h3 className="panel-title">{t('settings.params.title')}</h3>
         <div>
           <Row gutter={16}>
-            {(settings.numberFields ?? []).map((field) => (
+            {shared(settings.numberFields ?? []).map((field) => (
               <Col span={6} key={field.key}>
                 <Form.Item
                   name={field.key}

@@ -11,6 +11,12 @@ import { ensureWorkspace, record, loadEvents, reduceEvents } from '../lib/core.m
 import { makeToken, verifyToken, planCloseAction, stateFingerprint } from '../lib/dashboard-actions.mjs';
 import { readManualHabits, preferenceProjection } from '../lib/preferences.mjs';
 import { inside } from '../lib/transport.mjs';
+import { makeTranslator, renderMessages } from '../lib/messages.mjs';
+
+// A refusal carries the issues it was built from rather than a sentence, so an assertion about
+// wording renders them the way the settings page does. The locale is pinned for determinism.
+const zhT = makeTranslator('zh-Hans');
+const zh = (value) => renderMessages(value, zhT);
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-write-'));
@@ -514,10 +520,10 @@ test('update-config refuses a role that points outside the memory root', async (
       }));
       assert.equal(res.status, 500, `role ${escape} must be refused`);
       const refused = await res.json();
-      assert.match(refused.error, /roles\.eventsRoot.*记忆库根目录内/);
+      assert.match(refused.error, /roles\.eventsRoot.*must stay inside the memory store root/);
       // The refusal carries the issues themselves beside the sentence assembled from them, which is
       // what lets the settings page word them in the reader's own language.
-      assert.ok(Array.isArray(refused.issues) && refused.issues.some((line) => /roles\.eventsRoot/.test(line)),
+      assert.ok(Array.isArray(refused.issues) && refused.issues.some((line) => /roles\.eventsRoot.*记忆库根目录内/.test(zh(line))),
         `the refusal must carry structured issues, got ${JSON.stringify(refused.issues)}`);
     }
   });
@@ -530,13 +536,13 @@ test('update-config refuses numeric parameters outside their allowed range', asy
     const zero = await post(base, 'update-config/preview', configPayload(config, { activeLimit: 0 }));
     assert.equal(zero.status, 500);
     const refusedZero = await zero.json();
-    assert.match(refusedZero.error, /activeLimit.*必须是 1 到 200 之间的整数/);
-    assert.ok(Array.isArray(refusedZero.issues) && refusedZero.issues.some((line) => /activeLimit/.test(line)),
+    assert.match(refusedZero.error, /activeLimit.*must be an integer between 1 and 200/);
+    assert.ok(Array.isArray(refusedZero.issues) && refusedZero.issues.some((line) => /activeLimit/.test(zh(line))),
       `the refusal must carry structured issues, got ${JSON.stringify(refusedZero.issues)}`);
 
     const fractional = await post(base, 'update-config/preview', configPayload(config, { budgetBytes: 12.5 }));
     assert.equal(fractional.status, 500);
-    assert.match((await fractional.json()).error, /budgetBytes.*整数/);
+    assert.match((await fractional.json()).error, /budgetBytes.*must be an integer/);
 
     const missing = await post(base, 'update-config/preview', configPayload(config, { recentDays: null }));
     assert.equal(missing.status, 500);
@@ -553,7 +559,7 @@ test('update-config refuses a memory root that points at this repository', async
       memoryRoot: repository, vaultRoot: repository,
     }));
     assert.equal(res.status, 500);
-    assert.match((await res.json()).error, /不能指向本项目仓库/);
+    assert.match((await res.json()).error, /must not point at this program/);
   });
 });
 
@@ -563,13 +569,13 @@ test('update-config requires both obsidian fields for the obsidian-cli backend',
     const config = loader();
     const missingCli = await post(base, 'update-config/preview', configPayload(config, { storage: 'obsidian-cli' }));
     assert.equal(missingCli.status, 500);
-    assert.match((await missingCli.json()).error, /必须填写 obsidianCli/);
+    assert.match((await missingCli.json()).error, /requires obsidianCli/);
 
     const missingVault = await post(base, 'update-config/preview', configPayload(config, {
       storage: 'obsidian-cli', obsidianCli: 'C:/tools/obsidian.exe',
     }));
     assert.equal(missingVault.status, 500);
-    assert.match((await missingVault.json()).error, /必须填写 vaultName/);
+    assert.match((await missingVault.json()).error, /requires vaultName/);
 
     const complete = await post(base, 'update-config/preview', configPayload(config, {
       storage: 'obsidian-cli', obsidianCli: 'C:/tools/obsidian.exe', vaultName: 'my-vault',
@@ -590,7 +596,7 @@ test('update-config refuses a preview that changes nothing', async (t) => {
     }));
     const body = await res.json();
     assert.equal(res.status, 500, `unexpected changes: ${JSON.stringify(body.plan?.changes)}`);
-    assert.match(body.error, /配置没有变化/);
+    assert.match(body.error, /configuration is unchanged/);
   });
 });
 

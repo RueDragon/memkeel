@@ -9,7 +9,7 @@ import { createTransport } from '../lib/storage/index.mjs';
 import { ensureWorkspace, record } from '../lib/core.mjs';
 import { settingsSnapshot } from '../lib/dashboard-data.mjs';
 import { privacyView } from '../lib/privacy.mjs';
-import { makeTranslator, renderMessages } from '../lib/messages.mjs';
+import { isMessageReference, makeTranslator, renderMessages } from '../lib/messages.mjs';
 
 // Payloads carry message references for the prose that originates in lib/, so a test that reads that
 // prose renders it the way the settings page does. The locale is pinned for determinism.
@@ -166,6 +166,16 @@ test('settings endpoint reports the config path, the editable groups and the rea
     assert.equal(body.validation.ok, true, JSON.stringify(body.validation.issues));
     assert.deepEqual(body.roleFields.map((row) => row.key), EDITABLE_ROLES);
     assert.equal(body.numberFields.length, 4);
+    // The four field tables are display data shown by the page, so they travel as message
+    // references: a plain string here would be a hardcoded language again, and would leave the
+    // page's `shared()` call nothing to render. Both halves are pinned - that they are references,
+    // and that they still resolve to the wording.
+    assert.ok(body.roleFields.every((row) => isMessageReference(row.label)), JSON.stringify(body.roleFields));
+    assert.ok(body.numberFields.every((row) => isMessageReference(row.label) && isMessageReference(row.hint)), JSON.stringify(body.numberFields));
+    assert.ok(body.layoutOptions.every((row) => isMessageReference(row.label)), JSON.stringify(body.layoutOptions));
+    assert.ok(body.storageOptions.every((row) => isMessageReference(row.label)), JSON.stringify(body.storageOptions));
+    assert.equal(renderMessages(body.roleFields, en)[0].label, 'Event directory');
+    assert.equal(renderMessages(body.numberFields, en)[0].label, 'Active projects injected');
     assert.deepEqual(body.hostBindings.map((row) => row.id), ['codex', 'claude', 'zcode', 'dsh']);
     assert.equal(body.obsidian.optional, true);
     assert.equal(body.obsidian.downloadUrl, 'https://obsidian.md/download');
@@ -269,7 +279,7 @@ test('settings reports a store path that does not validate instead of failing', 
     assert.equal(res.status, 200, 'the settings page must load so a broken store can be repaired');
     const body = await res.json();
     assert.equal(body.validation.ok, false);
-    assert.ok(body.validation.issues.some((row) => row.field === 'memoryRoot' && /不是目录/.test(row.message)));
+    assert.ok(body.validation.issues.some((row) => row.field === 'memoryRoot' && /is not a directory/.test(renderMessages(row.message, en))));
     // The model build still fails on a broken store, which is exactly why the settings
     // route is served before it.
     const overview = await fetch(`${base}/api/overview`);
@@ -286,7 +296,7 @@ test('settings accepts a store root that does not exist yet and says so', async 
   await withServer(loader, async (base) => {
     const body = await (await fetch(`${base}/api/settings`)).json();
     assert.equal(body.validation.ok, true, JSON.stringify(body.validation.issues));
-    assert.ok(body.validation.notes.some((note) => /保存时会自动创建/.test(note)));
+    assert.ok(body.validation.notes.some((note) => /does not exist yet/.test(renderMessages(note, en))));
     assert.equal(fs.existsSync(missing), false, 'reading the settings page must not create anything');
   });
 });
