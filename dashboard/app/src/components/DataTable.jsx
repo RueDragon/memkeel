@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Table, Input, Space } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
+import { useI18n } from '../i18n/index.jsx';
 
 // Bridge between the table views and Ant Design.
 //
@@ -15,12 +16,13 @@ export default function DataTable({
   onRowClick,
   pageSize = 10,
   searchable = true,
-  searchPlaceholder = '筛选…',
+  searchPlaceholder,
   rowKey,
   extra,
   scrollY,
   minColumnWidth = 72,
 }) {
+  const { t } = useI18n();
   const [globalFilter, setGlobalFilter] = useState('');
   const [sortState, setSortState] = useState({});
   const [page, setPage] = useState(1);
@@ -106,7 +108,7 @@ export default function DataTable({
             ? <Input
                 allowClear
                 prefix={<SearchOutlined />}
-                placeholder={searchPlaceholder}
+                placeholder={searchPlaceholder ?? t('dataTable.filter')}
                 value={globalFilter}
                 onChange={(e) => { setGlobalFilter(e.target.value); setPage(1); }}
                 style={{ width: 280 }}
@@ -126,7 +128,7 @@ export default function DataTable({
           pageSize: pageSizeState,
           showSizeChanger: true,
           size: 'small',
-          showTotal: (t, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${t} 条`,
+          showTotal: (total, range) => t('dataTable.total', { from: range[0], to: range[1], total }),
           pageSizeOptions: ['10', '20', '50', '100'],
           onShowSizeChange: (_cur, size) => { setPageSizeState(size); setPage(1); },
         }}

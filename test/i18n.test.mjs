@@ -59,7 +59,7 @@ for (const [relative, text] of sources) {
 // to it. Converting components/ChatBubbles.jsx moved the count by 1 while it actually removed three
 // pieces of Chinese — two of them were <span>我</span>, bare JSX text. The number below is therefore a
 // floor, not the full remainder, and the same class of text still has to be found by reading.
-const HARDCODED_BUDGET = 292;
+const HARDCODED_BUDGET = 290;
 
 test('every locale defines exactly the same keys', () => {
   const expected = Object.keys(MESSAGES[DEFAULT_LOCALE]).sort();
@@ -111,6 +111,7 @@ test('every navigation entry has a label and a description in every locale', () 
 const CONVERTED = [
   'App.jsx',
   'components/ChatBubbles.jsx',
+  'components/DataTable.jsx',
   'components/DecisionModal.jsx',
   'components/EditModal.jsx',
   'components/Links.jsx',
