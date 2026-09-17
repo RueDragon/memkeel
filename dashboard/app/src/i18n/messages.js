@@ -372,6 +372,16 @@ export const MESSAGES = {
     'detail.history': '变更历史（{n} 次）',
     'detail.current': '当前',
     'detail.replacedBy': ' ← 替代 {id}',
+    // views/Settings.jsx is converted in blocks rather than whole: 137 lines of Chinese, almost all
+    // of it long explanatory prose, is more than one reviewable change. This is the first block, the
+    // save flow and its error state.
+    'settings.saveTitle': '保存配置',
+    'settings.confirmWrite': '确认写入',
+    'settings.written': '配置已写入',
+    'settings.writtenRestart': '配置已写入，记得重启宿主进程',
+    'settings.acknowledge': '知道了',
+    'settings.loadFailed': '读取配置失败：{error}',
+    'settings.loadFailedHint': '读不到 config.json 时无法在界面里编辑它。请直接打开配置文件修正 JSON 语法或路径，然后重试。',
     'conflicts.empty': '当前没有未解决冲突',
     'conflicts.filter': '筛选冲突…',
     'events.filter': '筛选事件…',
@@ -752,6 +762,16 @@ export const MESSAGES = {
     'detail.history': 'Change history ({n})',
     'detail.current': 'current',
     'detail.replacedBy': ' ← supersedes {id}',
+    // views/Settings.jsx is converted in blocks rather than whole: 137 lines of Chinese, almost all
+    // of it long explanatory prose, is more than one reviewable change. This is the first block, the
+    // save flow and its error state.
+    'settings.saveTitle': 'Save configuration',
+    'settings.confirmWrite': 'Confirm write',
+    'settings.written': 'Configuration written',
+    'settings.writtenRestart': 'Configuration written — remember to restart the host process',
+    'settings.acknowledge': 'Got it',
+    'settings.loadFailed': 'Could not read the configuration: {error}',
+    'settings.loadFailedHint': 'Without config.json there is nothing to edit here. Open the file directly, fix its JSON syntax or a path, and try again.',
     'conflicts.empty': 'No unresolved conflicts',
     'conflicts.filter': 'Filter conflicts…',
     'events.filter': 'Filter events…',

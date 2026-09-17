@@ -9,6 +9,7 @@ import DecisionModal from '../components/DecisionModal.jsx';
 import Markdown from '../components/Markdown.jsx';
 import PageSkeleton from '../components/PageSkeleton.jsx';
 import { getSettings, postWrite } from '../lib/api.js';
+import { useI18n } from '../i18n/index.jsx';
 
 const { Text } = Typography;
 
@@ -242,6 +243,7 @@ function CollectionPolicy({ collection }) {
 }
 
 export default function Settings({ reload }) {
+  const { t } = useI18n();
   const { message } = AntApp.useApp();
   const [form] = Form.useForm();
   const [settings, setSettings] = useState(null);
@@ -287,10 +289,10 @@ export default function Settings({ reload }) {
         roles: values.roles ?? {},
       });
       setDecision({
-        title: '保存配置',
+        title: t('settings.saveTitle'),
         summary: preview.plan.summary,
         changes: preview.plan.changes,
-        okText: '确认写入',
+        okText: t('settings.confirmWrite'),
         onConfirm: async () => {
           const result = await postWrite('execute', {
             action: 'update-config',
@@ -298,14 +300,14 @@ export default function Settings({ reload }) {
             fingerprint: preview.fingerprint,
             token: preview.token,
           });
-          message.success('配置已写入');
+          message.success(t('settings.written'));
           await load();
           reload?.();
           if (result?.restartRequired) {
             Modal.info({
-              title: '配置已写入，记得重启宿主进程',
+              title: t('settings.writtenRestart'),
               width: 640,
-              okText: '知道了',
+              okText: t('settings.acknowledge'),
               content: <RestartNotice restart={settings?.restart} />,
             });
           }
@@ -323,11 +325,11 @@ export default function Settings({ reload }) {
   if (error && !settings) {
     return (
       <div className="center-box">
-        <Empty description={`读取配置失败：${error}`} />
+        <Empty description={t('settings.loadFailed', { error })} />
         <div className="muted" style={{ marginTop: 10, maxWidth: 620, textAlign: 'center' }}>
-          读不到 config.json 时无法在界面里编辑它。请直接打开配置文件修正 JSON 语法或路径，然后重试。
+          {t('settings.loadFailedHint')}
         </div>
-        <Button type="primary" icon={<ReloadOutlined />} onClick={load} style={{ marginTop: 16 }}>重试</Button>
+        <Button type="primary" icon={<ReloadOutlined />} onClick={load} style={{ marginTop: 16 }}>{t('shell.retry')}</Button>
       </div>
     );
   }
