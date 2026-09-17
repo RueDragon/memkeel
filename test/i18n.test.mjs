@@ -152,6 +152,44 @@ test('every converted file is free of full-width punctuation', () => {
   }
 });
 
+// Files whose Chinese is data rather than interface text, and must therefore NOT be translated.
+// lib/chat.js parses the checkpoint markers that lib/hooks.mjs writes into an event body, so those
+// strings are a wire format: translating them would stop the writer and the parser agreeing and the
+// conversation bubbles would silently collapse into one paragraph. They are pinned at an exact count
+// so the exemption cannot quietly grow into a hiding place for real interface text.
+const EXEMPT_CHINESE = new Map([
+  ['lib/chat.js', 4],
+]);
+
+test('exempt files hold exactly the data markers they are exempted for', () => {
+  for (const [file, expected] of EXEMPT_CHINESE) {
+    const actual = chineseLiterals(sources.get(file) ?? '').length;
+    assert.equal(actual, expected,
+      `${file} is exempt for ${expected} data marker(s) but now holds ${actual}; the exemption covers wire-format markers only`);
+  }
+});
+
+test('the checkpoint markers the console parses still match the ones the hook writes', () => {
+  // The contract, not a copy of it: the parser in the app and the writer in the backend must agree
+  // byte for byte. Localising either side fails here instead of failing silently in the interface.
+  //
+  // Comments are stripped first, and that is not tidiness: the first version of this test read the
+  // whole file, and lib/chat.js documents the markers in a comment, so the assertion was satisfied by
+  // the comment while the actual constant had been changed. It passed with the code deliberately
+  // broken. A contract test that a comment can satisfy is not a contract test.
+  const backend = stripComments(fs.readFileSync(new URL('../lib/hooks.mjs', import.meta.url), 'utf8'));
+  const frontend = stripComments(sources.get('lib/chat.js') ?? '');
+  assert.ok(frontend, 'lib/chat.js must be part of the scanned sources');
+  for (const marker of ['任务要求（用户报告）：', '最近回复（未复核，不是当前事实）：']) {
+    assert.ok(backend.includes(marker), `lib/hooks.mjs no longer writes the marker ${marker}`);
+    assert.ok(frontend.includes(marker), `lib/chat.js no longer recognises the marker ${marker}`);
+  }
+  // The reply marker is also parsed by the digest, so a third place has to keep agreeing with them.
+  const digest = stripComments(fs.readFileSync(new URL('../lib/digest.mjs', import.meta.url), 'utf8'));
+  assert.ok(digest.includes('最近回复（未复核，不是当前事实）：'),
+    'lib/digest.mjs no longer writes or parses the same reply marker');
+});
+
 test('hardcoded Chinese outside the catalogue does not exceed its recorded budget', () => {
   const worst = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([file, n]) => `${file}:${n}`);
   assert.ok(hardcodedTotal <= HARDCODED_BUDGET,
