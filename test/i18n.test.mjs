@@ -121,6 +121,30 @@ test('every converted file carries no hardcoded interface text', () => {
   }
 });
 
+// The literal scan above only recognises CJK ideographs (U+4E00-U+9FFF), so it cannot see full-width
+// punctuation sitting in a JSX text node — which is exactly how a full-width colon survived into the
+// English interface until it was noticed by hand, and why that fix went in without a failing test.
+// This scan covers that class of character directly. Comments are removed first so that a Chinese
+// explanatory comment is not mistaken for interface text.
+const CJK_PUNCTUATION = /[\u3000-\u303f\uff00-\uffef]/g;
+
+function stripComments(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .split('\n')
+    .map((line) => (/^\s*\/\//.test(line) ? '' : line))
+    .join('\n');
+}
+
+test('every converted file is free of full-width punctuation', () => {
+  for (const file of CONVERTED) {
+    const text = stripComments(sources.get(file) ?? '');
+    const hits = text.match(CJK_PUNCTUATION) ?? [];
+    assert.equal(hits.length, 0,
+      `${file} contains full-width punctuation that belongs in the catalogue: ${JSON.stringify([...new Set(hits)])}`);
+  }
+});
+
 test('hardcoded Chinese outside the catalogue does not exceed its recorded budget', () => {
   const worst = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([file, n]) => `${file}:${n}`);
   assert.ok(hardcodedTotal <= HARDCODED_BUDGET,
