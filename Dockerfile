@@ -9,8 +9,11 @@
 #
 # Verification status: the file set below and the command contract in the comments are covered by
 # tests that run against the published package (`npm pack`, unpacked into an empty directory), and a
-# test asserts that every path copied here exists and that `dashboard/app` is not copied. An actual
-# image build and container run are NOT covered, because CI has no container runtime.
+# test asserts that every path copied here exists and that `dashboard/app` is not copied. The image
+# build and a container run are covered by the `docker` job in `.github/workflows/ci.yml`, which builds
+# this image and runs `init`, `register`, `record`, `recall` and `doctor` against synthetic data in the
+# runner's temporary directory: no registry, no push, no secret, and nothing mounted from a real memory
+# home, a real host configuration or a real knowledge base.
 FROM node:22-slim
 
 # Pinned so a later `docker build` cannot silently drop below the supported runtime

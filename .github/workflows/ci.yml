@@ -101,3 +101,58 @@ jobs:
       # shipped file list against package.json "files" and scans the artifact's text.
       - name: leak gate (packaged artifact)
         run: npm run pack-scan
+
+  docker:
+    name: docker build and smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image is built from the Dockerfile and run against synthetic data in $RUNNER_TEMP. There is
+      # no registry, no push and no secret here: nothing leaves the runner, and the real knowledge base
+      # and host configuration are never mounted into the container.
+      - name: build the image
+        run: docker build --tag memkeel:ci .
+
+      - name: run it against synthetic data
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/memkeel-smoke"
+          rm -rf "$work"
+          mkdir -p "$work/home" "$work/store" "$work/project"
+          # The only data in play: a note the event cites and the event itself.
+          printf '# Evidence\n\nA note the event can cite.\n' > "$work/store/evidence.md"
+
+          # MEMKEEL_HOME is /memkeel in the image, so the mounts are the only paths involved.
+          run() { docker run --rm -v "$work/home:/memkeel" -v "$work/store:/store" -v "$work/project:/project" memkeel:ci "$@"; }
+
+          docker image inspect --format 'image id={{.Id}} size={{.Size}}' memkeel:ci
+
+          run init --store /store
+          run doctor
+          workspace="$(run workspace-add --cwd /project | sed -n 's/.*"id": *"\([^"]*\)".*/\1/p')"
+          test -n "$workspace" || { echo "::error::the workspace id could not be read back"; exit 1; }
+          run register --topic "$workspace/smoke" --workspace "$workspace" --title "Container smoke"
+
+          cat > "$work/project/event.json" <<EVENT
+          {
+            "event_id": "20260918-dsh-container-smoke-01",
+            "workspace": "$workspace",
+            "topic": "$workspace/smoke",
+            "agent": "dsh",
+            "occurred_at": "2026-09-18T00:00:00.000Z",
+            "evidence": ["evidence.md"],
+            "facts": [{ "key": "container-smoke", "text": "the image records and recalls a fact" }],
+            "verification": ["recorded by the CI container smoke"]
+          }
+          EVENT
+
+          run record --file /project/event.json
+          run recall --query "container smoke" --workspace "$workspace" | grep -q 'container-smoke\|records and recalls'
+          run doctor
+
+          # Both mounts were written through: the journal note and the home's derived state exist on the
+          # host side, which is what proves the image is not writing inside itself.
+          test -n "$(find "$work/store/events" -name '*.md' -print -quit)"
+          test -f "$work/home/config.json"
+          echo "container smoke: ok"
