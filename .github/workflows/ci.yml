@@ -125,26 +125,12 @@ jobs:
           set -euo pipefail
           work="$RUNNER_TEMP/memkeel-smoke"
           rm -rf "$work"
-          mkdir -p "$work/memory-home" "$work/store"
+          mkdir -p "$work/memory-home" "$work/store/topics" "$work/store/projects"
+
+          # The synthetic store is written BEFORE the container runs, while these directories still
+          # belong to the runner. The image runs as root, so `init` below creates the store's
+          # subdirectories root-owned, and a host-side write into one of those would be denied.
           printf '# Container smoke\n\nA topic note the event can cite.\n' > "$work/store/evidence.md"
-
-          # MEMKEEL_HOME is /memkeel in the image, so the mounts are the only paths involved.
-          run() { docker run --rm -v "$work/memory-home:/memkeel" -v "$work/store:/store" memkeel:ci "$@"; }
-
-          docker image inspect --format 'image id={{.Id}} size={{.Size}}' memkeel:ci
-
-          run init --store /store
-          # The route, the workspace note and the topic note are synthetic data, written rather than
-          # derived because deriving them is what needs git. `loadRoutes` reads the `workspace:` field of
-          # `<projectRoot>/workspace-*.md`, so that note is what makes the workspace resolvable.
-          docker run --rm --entrypoint node -v "$work/memory-home:/memkeel" memkeel:ci -e "
-            const fs = require('node:fs');
-            const file = '/memkeel/config.json';
-            const config = JSON.parse(fs.readFileSync(file, 'utf8'));
-            config.topics = [{ id: 'container-smoke/ci', workspace: 'container-smoke', title: 'Container smoke', aliases: [], path: 'topics/container-smoke--ci.md' }];
-            fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
-          "
-          mkdir -p "$work/store/topics" "$work/store/projects"
           cat > "$work/store/projects/workspace-container-smoke.md" <<'WORKSPACE'
           ---
           type: workspace-state
@@ -157,8 +143,6 @@ jobs:
           # container-smoke
           WORKSPACE
           printf '# Container smoke\n\n<!-- AUTO-MANAGED:START -->\n<!-- AUTO-MANAGED:END -->\n' > "$work/store/topics/container-smoke--ci.md"
-
-          run doctor
           cat > "$work/store/event.json" <<EVENT
           {
             "event_id": "20260918-dsh-container-smoke-01",
@@ -172,6 +156,24 @@ jobs:
           }
           EVENT
 
+          # MEMKEEL_HOME is /memkeel in the image, so the mounts are the only paths involved.
+          run() { docker run --rm -v "$work/memory-home:/memkeel" -v "$work/store:/store" memkeel:ci "$@"; }
+
+          docker image inspect --format 'image id={{.Id}} size={{.Size}}' memkeel:ci
+
+          run init --store /store
+          # The topic route is seeded rather than derived, because deriving it is what needs git. Writing
+          # the configuration has to happen after `init`, which is what creates it; the write runs through
+          # the image's own Node, so the smoke needs no tooling on the runner.
+          docker run --rm --entrypoint node -v "$work/memory-home:/memkeel" memkeel:ci -e "
+            const fs = require('node:fs');
+            const file = '/memkeel/config.json';
+            const config = JSON.parse(fs.readFileSync(file, 'utf8'));
+            config.topics = [{ id: 'container-smoke/ci', workspace: 'container-smoke', title: 'Container smoke', aliases: [], path: 'topics/container-smoke--ci.md' }];
+            fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
+          "
+
+          run doctor
           run record --file /store/event.json
           run recall --query "container smoke" --workspace container-smoke | grep -q 'container-smoke\|records and recalls'
           run index --force
