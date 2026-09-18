@@ -166,3 +166,14 @@ test('every Dockerfile COPY source exists, and the image does not ship the app s
   // The runtime imports this module directly (lib/core.mjs), so it cannot be dropped as an asset.
   assert.ok(sources.includes('vendor/'), 'vendor/ is a runtime import and must be copied');
 });
+
+test('the image lets the caller choose the runtime user instead of pinning one', () => {
+  const text = fs.readFileSync(path.join(repo, 'Dockerfile'), 'utf8');
+  // The behaviour is checked where it can be: the `docker` CI job runs the documented commands with
+  // `--user "$(id -u):$(id -g)"` and asserts that everything left on the host belongs to that uid. This
+  // keeps the documentation from drifting away from it, which is the half a unit test can hold.
+  assert.equal(/^\s*USER\s/m.test(text), false, 'a USER directive would decide for the user and would not match the owner of the mounted directories');
+  assert.ok(text.includes('--user "$(id -u):$(id -g)"'), 'the documented commands must hand the container the caller\'s ids');
+  assert.equal(/\b(1000|1001|10001)\b/.test(text), false, 'no runtime uid may be hard-coded');
+  assert.ok(text.includes('git'), 'workspace-add and bootstrap --cwd need git in the image');
+});

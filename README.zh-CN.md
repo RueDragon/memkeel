@@ -697,16 +697,21 @@ Obsidian 是一种*增强*，而不是必需项：
 
 ## Docker
 
-该镜像只运行 **`filesystem`** 后端：没有 Obsidian，没有 GUI，也没有外部服务。
+该镜像只运行 **`filesystem`** 后端：没有 Obsidian，没有 GUI，也没有外部服务。镜像里带 `git`，
+因为工作区身份来自仓库的 common 目录，下面的 `workspace-add --cwd` 与 `bootstrap --cwd` 都会
+调用它。
 
 ```bash
 docker build -t memkeel .
 
 # 首次运行：创建 memory home，并把存储指向挂载的卷。
-docker run --rm -v memkeel-home:/memkeel -v "$PWD/store:/store" memkeel init --store /store
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD/memory-home:/memkeel" -v "$PWD/store:/store" \
+  memkeel init --store /store
 
 # 之后默认命令就是健康检查。
-docker run --rm -v memkeel-home:/memkeel -v "$PWD/store:/store" memkeel
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD/memory-home:/memkeel" -v "$PWD/store:/store" memkeel
 ```
 
 | 卷 | 容器内路径 | 用途 |
@@ -717,24 +722,46 @@ docker run --rm -v memkeel-home:/memkeel -v "$PWD/store:/store" memkeel
 请同时挂载两者。memory home 存放配置和派生状态；存储存放你丢了会心疼的 Markdown。镜像中
 `MEMKEEL_HOME` 被设置为 `/memkeel`。
 
+### 以谁的身份运行
+
+镜像没有设置 `USER`，所以不带 `--user` 的 `docker run` 是 **root**，而这个默认值只适合只读检查：
+以 root 往挂载点写入，会在宿主目录里留下 root 属主的文件，而在知识库里那正是你随后自己改不了的
+目录。**任何会写入的命令，受支持的跑法都是把你自己 uid/gid 交给容器**，也就是上面命令里的
+`--user "$(id -u):$(id -g)"`。这里不会对任何卷做 chown —— 无论是本程序还是这个镜像：容器之所以
+能以那个 uid 写入，是因为绑定挂载的目录本来就属于它。
+
+这也是示例用绑定挂载而不是命名卷的原因：命名卷由 Docker 依据镜像创建，因此属主是 root，
+非特权 uid 写不进去。选择只有两种 —— 归你所有的目录配上 `--user`，或者 root 配命名卷。镜像里
+`HOME` 设为 `/tmp`，好让任意 uid 下都有一个可写的位置可看；本程序不在 `$HOME` 里存任何东西，
+因为 memory home 是 `MEMKEEL_HOME`。
+
 `init` 是幂等的，而且必须告诉它存储在哪里：不带 `--store /store` 时它会把存储建在 home 卷
 里面，`/store` 挂载就白挂了。memory home 存在之后，默认命令是 `node memory.mjs doctor`，
-也可以用其他命令覆盖，例如：
+也可以用其他命令覆盖。需要读取项目目录的命令，必须先把项目挂进去：
 
 ```bash
-docker run --rm -v memkeel-home:/memkeel -v "$PWD/store:/store" memkeel \
-  bootstrap --cwd /store --query "release checklist"
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD/memory-home:/memkeel" -v "$PWD/store:/store" -v "$PWD/my-project:/project" \
+  memkeel workspace-add --cwd /project
+
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD/memory-home:/memkeel" -v "$PWD/store:/store" -v "$PWD/my-project:/project" \
+  memkeel bootstrap --cwd /project --query "release checklist"
 ```
+
+`bootstrap --cwd` 读的是**项目**目录，并报告它在那里解析出的工作区；存储不是项目，把 `--cwd`
+指向存储并不能说明这次运行属于哪个工作区。
 
 Windows PowerShell 下卷参数的引号写法不同，`$PWD` 要写成 `${PWD}`：
 
 ```powershell
 docker build -t memkeel .
-docker run --rm -v memkeel-home:/memkeel -v "${PWD}/store:/store" memkeel init --store /store
-docker run --rm -v memkeel-home:/memkeel -v "${PWD}/store:/store" memkeel
+docker run --rm --user "$(id -u):$(id -g)" -v "${PWD}/memory-home:/memkeel" -v "${PWD}/store:/store" memkeel init --store /store
+docker run --rm --user "$(id -u):$(id -g)" -v "${PWD}/memory-home:/memkeel" -v "${PWD}/store:/store" memkeel
 ```
 
-macOS 上直接使用上面的 bash 写法即可；Docker Desktop 的卷语法相同。
+macOS 上直接使用上面的 bash 写法即可；Docker Desktop 的卷语法相同，`id -u`/`id -g` 在两种
+shell 里都可用。
 
 ### 这个镜像是什么，不是什么
 
@@ -753,8 +780,12 @@ hooks 在容器中没有意义（那里没有 agent 宿主），因此容器里�
 请求。另有一个测试断言 Dockerfile 里每个 COPY 源路径都存在、且**没有**复制 `dashboard/app`，
 因此镜像发布的内容与 `npm pack` 发布的内容一致。
 
-**未验证的是容器本身**：本机没有容器运行时，因此没有执行过镜像构建，也没有在容器里跑过。
-请把"文件集合与命令契约"当作已验证，把"镜像构建"当作未验证。
+镜像本身由 `.github/workflows/ci.yml` 里的 `docker` job 在每次推送时构建并运行：它构建
+Dockerfile，然后在容器内**以调用者 uid** 对合成数据依次跑 `init`、`workspace-add`、`register`、
+`record`、`recall`、`bootstrap` 和 `doctor`，并断言留在宿主上的每个文件都归该 uid 所有。这个
+结论有两条边界：它是镜像唯一被实际检验的地方，因为本机没有容器运行时，所以镜像相关内容在本地
+一律未验证；而且它只跑在 GitHub 的 ubuntu runner 上，其他容器运行时都没有覆盖。这里不发布任何
+东西 —— 仓库里没有 registry 登录，也没有任何推送。
 
 ## 项目布局
 

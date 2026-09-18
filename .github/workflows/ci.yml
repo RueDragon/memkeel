@@ -112,42 +112,54 @@ jobs:
       # no registry, no push and no secret here: nothing leaves the runner, and the real knowledge base
       # and host configuration are never mounted into the container.
       #
-      # The image ships Node and nothing else, so it has no `git`. Workspace identity is derived from a
-      # repository's common directory, which is why `workspace-add --cwd DIR` - and the `bootstrap
-      # --cwd` example in the Dockerfile's own comments - cannot work inside this container. The smoke
-      # seeds one topic route in the mounted configuration instead of deriving it, and the limitation is
-      # written down here rather than discovered by the next person who tries it.
+      # The smoke runs the commands the Dockerfile and the README document, as the invoking user rather
+      # than as root, and checks what it leaves on the host. The image ships `git` so that workspace
+      # identity can actually be derived, which is what `workspace-add --cwd` and `bootstrap --cwd` need:
+      # an earlier revision of this job seeded the route and the topic by writing config.json through
+      # `--entrypoint node` and said in a comment that the documented commands could not work here.
       - name: build the image
         run: docker build --tag memkeel:ci .
 
-      - name: run it against synthetic data
+      - name: run it against synthetic data as the invoking user
         run: |
           set -euo pipefail
           work="$RUNNER_TEMP/memkeel-smoke"
           rm -rf "$work"
-          mkdir -p "$work/memory-home" "$work/store/topics" "$work/store/projects"
+          mkdir -p "$work/memory-home" "$work/store" "$work/project"
 
-          # The synthetic store is written BEFORE the container runs, while these directories still
-          # belong to the runner. The image runs as root, so `init` below creates the store's
-          # subdirectories root-owned, and a host-side write into one of those would be denied.
-          printf '# Container smoke\n\nA topic note the event can cite.\n' > "$work/store/evidence.md"
-          cat > "$work/store/projects/workspace-container-smoke.md" <<'WORKSPACE'
-          ---
-          type: workspace-state
-          scope: project
-          workspace: container-smoke
-          project: container-smoke
-          status: active
-          origin: ci-smoke
-          ---
-          # container-smoke
-          WORKSPACE
-          printf '# Container smoke\n\n<!-- AUTO-MANAGED:START -->\n<!-- AUTO-MANAGED:END -->\n' > "$work/store/topics/container-smoke--ci.md"
+          # A real repository: workspace identity is derived from the repository's common directory, not
+          # from a directory name, so this is the input the documented command takes.
+          git -C "$work/project" init --quiet
+
+          printf '# Container smoke\n\nA note the recorded event can cite.\n' > "$work/store/evidence.md"
+
+          # `--user "$(id -u):$(id -g)"` is the documented contract. Nothing below chowns a volume: the
+          # container writes as the runner because these bind-mounted directories already belong to it.
+          run() {
+            docker run --rm --user "$(id -u):$(id -g)" \
+              -v "$work/memory-home:/memkeel" -v "$work/store:/store" -v "$work/project:/project" \
+              memkeel:ci "$@"
+          }
+
+          docker image inspect --format 'image id={{.Id}} size={{.Size}}' memkeel:ci
+          # The prerequisite the git-dependent commands in the documentation rely on.
+          docker run --rm --entrypoint git memkeel:ci --version
+
+          run init --store /store
+
+          # The workspace id is derived from the project root and a path hash, so it is read back from the
+          # command's own output instead of being guessed or hard-coded - by the user or by this file.
+          run workspace-add --cwd /project | tee "$work/workspace.json"
+          workspace="$(sed -n 's/.*"id": "\([^"]*\)".*/\1/p' "$work/workspace.json" | head -n 1)"
+          test -n "$workspace"
+          echo "derived workspace id: $workspace"
+          run register --topic "$workspace/ci" --workspace "$workspace" --title "Container smoke"
+
           cat > "$work/store/event.json" <<EVENT
           {
             "event_id": "20260918-dsh-container-smoke-01",
-            "workspace": "container-smoke",
-            "topic": "container-smoke/ci",
+            "workspace": "$workspace",
+            "topic": "$workspace/ci",
             "agent": "dsh",
             "occurred_at": "2026-09-18T00:00:00.000Z",
             "evidence": ["evidence.md"],
@@ -156,32 +168,22 @@ jobs:
           }
           EVENT
 
-          # MEMKEEL_HOME is /memkeel in the image, so the mounts are the only paths involved.
-          run() { docker run --rm -v "$work/memory-home:/memkeel" -v "$work/store:/store" memkeel:ci "$@"; }
-
-          docker image inspect --format 'image id={{.Id}} size={{.Size}}' memkeel:ci
-
-          run init --store /store
-          # The topic route is seeded rather than derived, because deriving it is what needs git. Writing
-          # the configuration has to happen after `init`, which is what creates it; the write runs through
-          # the image's own Node, so the smoke needs no tooling on the runner.
-          docker run --rm --entrypoint node -v "$work/memory-home:/memkeel" memkeel:ci -e "
-            const fs = require('node:fs');
-            const file = '/memkeel/config.json';
-            const config = JSON.parse(fs.readFileSync(file, 'utf8'));
-            config.topics = [{ id: 'container-smoke/ci', workspace: 'container-smoke', title: 'Container smoke', aliases: [], path: 'topics/container-smoke--ci.md' }];
-            fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
-          "
-
           run doctor
           run record --file /store/event.json
-          run recall --query "container smoke" --workspace container-smoke | grep -q 'container-smoke\|records and recalls'
+          run recall --query "container smoke" --workspace "$workspace" | grep -q 'container-smoke\|records and recalls'
+          # The documented `bootstrap --cwd` example: it reads the project directory, and the workspace it
+          # discovers has to be the one the event was recorded against.
+          run bootstrap --cwd /project --query "container smoke" | grep -q "$workspace"
           run index --force
           run doctor
 
-          # Both mounts were written through: the journal note and the home's derived state exist on the
-          # host side, which is what proves the image is not writing inside itself.
+          # Both mounts were written through, so the journal note and the home's derived state exist on
+          # the host side - which is what proves the image is not writing inside itself. Everything it
+          # wrote belongs to the invoking user: that is the non-root contract, checked rather than
+          # described, and it is the property a root container fails.
           test -n "$(find "$work/store/events" -name '*.md' -print -quit)"
           test -f "$work/memory-home/config.json"
           test -f "$work/memory-home/state/index.json"
-          echo "container smoke: ok"
+          stray="$(find "$work/store" "$work/memory-home" ! -user "$(id -u)" -print -quit)"
+          test -z "$stray" || { echo "not owned by uid $(id -u): $stray"; exit 1; }
+          echo "container smoke: ok as uid $(id -u)"

@@ -350,6 +350,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The container could not run the commands its own documentation showed.** The image shipped Node and
+  nothing else, so it had no `git` - and workspace identity is derived from a repository's common
+  directory, which means `workspace-add --cwd DIR` and the `bootstrap --cwd` example in both the
+  Dockerfile and the README failed with "Workspace discovery failed". The only way to register a
+  workspace was to edit `config.json` by hand, which is what the CI smoke did, with a comment saying so.
+  The image installs `git` now, with the apt lists removed in the same layer, and the smoke runs the
+  documented commands - `init`, `workspace-add`, `register`, `record`, `recall`, `bootstrap`, `doctor` -
+  reading the derived workspace id back from the command's own output instead of assuming a naming rule.
+- **The container wrote as root.** `docker run` with no `--user` is root, so a container pointed at a
+  knowledge base left root-owned files in it, and the person who owns the directory could no longer edit
+  what the container had written. The image and the README now state an explicit contract: run anything
+  that writes with `--user "$(id -u):$(id -g)"` against bind-mounted directories you already own, and
+  nothing chowns a volume - not the image, not the program. The CI smoke is the executable version of
+  that contract: it runs the documented commands as the invoking user and asserts that every file left
+  on the host belongs to that uid. A named volume cannot be used this way, because Docker creates it
+  from the image and therefore root-owned; that limit is written down where the contract is, and the
+  README's examples use bind mounts for exactly this reason. `HOME` is `/tmp`, so a run under an
+  arbitrary uid has somewhere writable to look; this program stores nothing in `$HOME`.
 - **A crash while writing a note destroyed the events already committed to it.** Storage wrote the
   target in place: the file was truncated first, and the new bytes were copied into it, so a process
   killed inside that window left the note half-written. For a journal note that is not a lost append

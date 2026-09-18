@@ -774,16 +774,21 @@ conveniences you personally rely on. Nothing in the event model depends on it.
 
 ## Docker
 
-The image runs the **`filesystem`** backend only: no Obsidian, no GUI, no external services.
+The image runs the **`filesystem`** backend only: no Obsidian, no GUI, no external services. It ships
+`git`, because workspace identity is derived from a repository's common directory and the
+`workspace-add --cwd` and `bootstrap --cwd` commands below shell out to it.
 
 ```bash
 docker build -t memkeel .
 
 # First run: create the memory home and point the store at the mounted volume.
-docker run --rm -v memkeel-home:/memkeel -v "$PWD/store:/store" memkeel init --store /store
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD/memory-home:/memkeel" -v "$PWD/store:/store" \
+  memkeel init --store /store
 
 # Afterwards the default command is the health check.
-docker run --rm -v memkeel-home:/memkeel -v "$PWD/store:/store" memkeel
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD/memory-home:/memkeel" -v "$PWD/store:/store" memkeel
 ```
 
 | Volume | Container path | Why |
@@ -794,25 +799,49 @@ docker run --rm -v memkeel-home:/memkeel -v "$PWD/store:/store" memkeel
 Mount both. The memory home holds the config and derived state; the store holds the Markdown
 you would be sad to lose. `MEMKEEL_HOME` is set to `/memkeel` in the image.
 
+### Running as whom
+
+The image sets no `USER`, so `docker run` without `--user` is **root**, and that default is only right
+for a read-only check: a root container writing through a mount leaves root-owned files in the host
+directory it was pointed at, and in a knowledge base that is the directory you then cannot edit
+yourself. The supported way to run anything that writes is to hand the container your own ids, as in
+the commands above. Nothing chowns a volume, here or at runtime: the container writes as that uid
+because the bind-mounted directory already belongs to it.
+
+That is also why the examples bind-mount directories instead of using a named volume. Docker creates a
+named volume from the image, so it is root-owned and an unprivileged uid cannot write to it — the
+choice is a directory you own together with `--user`, or root together with a named volume. `HOME` is
+`/tmp` in the image so that a run under an arbitrary uid has somewhere writable to look; this program
+keeps nothing in `$HOME`, because the memory home is `MEMKEEL_HOME`.
+
 `init` is idempotent, and it has to be told where the store lives: without `--store /store` it
 creates the store inside the home volume and the `/store` mount goes unused. Once a memory home
 exists the default command is `node memory.mjs doctor`, and you can override it with any other
-command, for example:
+command. A project directory has to be mounted for the commands that read one:
 
 ```bash
-docker run --rm -v memkeel-home:/memkeel -v "$PWD/store:/store" memkeel \
-  bootstrap --cwd /store --query "release checklist"
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD/memory-home:/memkeel" -v "$PWD/store:/store" -v "$PWD/my-project:/project" \
+  memkeel workspace-add --cwd /project
+
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD/memory-home:/memkeel" -v "$PWD/store:/store" -v "$PWD/my-project:/project" \
+  memkeel bootstrap --cwd /project --query "release checklist"
 ```
+
+`bootstrap --cwd` reads a **project** directory and reports the workspace it resolves there; the store
+is not a project, and pointing `--cwd` at it says nothing about which workspace a run belongs to.
 
 On Windows PowerShell the volume argument needs its own quoting, and `$PWD` is `${PWD}`:
 
 ```powershell
 docker build -t memkeel .
-docker run --rm -v memkeel-home:/memkeel -v "${PWD}/store:/store" memkeel init --store /store
-docker run --rm -v memkeel-home:/memkeel -v "${PWD}/store:/store" memkeel
+docker run --rm --user "$(id -u):$(id -g)" -v "${PWD}/memory-home:/memkeel" -v "${PWD}/store:/store" memkeel init --store /store
+docker run --rm --user "$(id -u):$(id -g)" -v "${PWD}/memory-home:/memkeel" -v "${PWD}/store:/store" memkeel
 ```
 
-On macOS the bash form works as written; Docker Desktop maps the same volume syntax.
+On macOS the bash form works as written; Docker Desktop maps the same volume syntax. `id -u` and
+`id -g` work in both shells.
 
 ### What this image is, and is not
 
@@ -834,9 +863,13 @@ checkout: `npm pack`, unpack into an empty directory, then `init` → `config va
 the Dockerfile copies exists and that `dashboard/app` is not copied, so the image ships exactly what
 `npm pack` ships.
 
-What is **not** verified is the container itself: this machine has no container runtime, so no image
-build and no container run has been performed. Treat the file set and the command contract as
-tested, and the image build as untested.
+The image itself is built and run by the `docker` job in `.github/workflows/ci.yml` on every push: it
+builds the Dockerfile, then runs `init`, `workspace-add`, `register`, `record`, `recall`, `bootstrap`
+and `doctor` inside the container as the invoking user against synthetic data, and asserts that
+everything left on the host belongs to that uid. Two limits on that: it is the only place the image is
+exercised, because this machine has no container runtime, so nothing about the image is verified
+locally; and it runs on GitHub's ubuntu runner only, so no other container runtime is covered. Nothing
+is published — there is no registry login and no push anywhere in this repository.
 
 ## Project layout
 
