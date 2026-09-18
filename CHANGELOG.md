@@ -350,6 +350,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Rebinding a host that already ran a previous install left it with two sets of hooks.** A hook entry
+  was recognised as this system's only when its command named *this* install's `hook-runner.mjs`, so the
+  entries left by an earlier install - the ones a move of the memory home or the program is supposed to
+  replace - were treated as somebody else's and kept, and the new entry was appended beside them. Every
+  session event then fired two runners writing to the same store. Found on a real machine while moving a
+  memory home: the Codex hook file ended up with two entries per event, and the same held for the two
+  hosts whose entries name the runner in `args` rather than in a command string. An entry now counts as
+  ours when it invokes a memory hook runner *and* names this host, which is what both the old and the new
+  declaration do; a runner for another host is still left for that host's own run to replace. The test
+  seeds the previous install's entry in both shapes and asserts one entry per event afterwards; it fails
+  against the previous code with "SessionStart must hold exactly one memory hook".
 - **`doctor` called a working store broken, and said nothing useful when it really was.** A registered
   topic's note is written by consolidation, once that topic has events to project, so a topic that has
   just been registered has no note yet - and `doctor` reported it as a missing file and exited non-zero.

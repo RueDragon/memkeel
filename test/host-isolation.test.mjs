@@ -219,6 +219,36 @@ test('all four hosts rebind from one memory home to another, and the original by
   assert.equal(fs.existsSync(path.join(f.root, 'wrong-home')), false, 'a run fell back to MEMKEEL_HOME instead of --home');
 });
 
+test('a hook entry left by a previous install is replaced, not duplicated beside', (t) => {
+  // Moving the memory home or the program is exactly when this matters: the entries already in the host
+  // file point at the *previous* install's hook-runner.mjs. Recognising only this install's own path
+  // retained those and appended a second entry, so every session event fired two runners - the old
+  // system and the new one - and both wrote to the same store. Found on the real hosts, where the
+  // Codex hooks.json ended up with two entries per event.
+  const f = isolated(t);
+  fs.writeFileSync(path.join(f.dirs.codex, 'config.toml'), 'model = "demo"\n');
+  const legacyCommand = (host) => ({ type: 'command', command: `node --experimental-strip-types "C:/somewhere-else/agent-memory/hook-runner.mjs" ${host}`,
+    commandWindows: `node --experimental-strip-types "C:/somewhere-else/agent-memory/hook-runner.mjs" ${host}`, async: false, timeoutSec: 90 });
+  const events = ['SessionStart', 'Stop'];
+  fs.writeFileSync(path.join(f.dirs.codex, 'hooks.json'), `${JSON.stringify({ hooks: Object.fromEntries(events.map((event) => [event, [{ hooks: [legacyCommand('codex')] }]])) }, null, 2)}\n`);
+  // ZCode's older entry names the runner in args instead of in a command string, so both shapes count.
+  const zcodeFile = path.join(f.dirs.zcode, 'cli', 'config.json');
+  fs.writeFileSync(zcodeFile, `${JSON.stringify({ hooks: { enabled: true, events: { SessionStart: [{ hooks: [{ type: 'process', command: 'C:/nvm4w/nodejs/node.exe', args: ['--experimental-strip-types', 'C:/somewhere-else/agent-memory/hook-runner.mjs', 'zcode'], timeoutMs: 90000 }] }] } } }, null, 2)}\n`);
+
+  const setup = f.run('setup', '--hosts', 'codex,zcode');
+  assert.equal(setup.status, 0, setup.stderr);
+  const ours = (hook) => JSON.stringify(hook).includes('hook-runner.mjs');
+
+  const codex = JSON.parse(fs.readFileSync(path.join(f.dirs.codex, 'hooks.json'), 'utf8'));
+  for (const event of events) {
+    assert.equal((codex.hooks[event] ?? []).flatMap((group) => group.hooks).filter(ours).length, 1, `${event} must hold exactly one memory hook`);
+  }
+  const zcode = JSON.parse(fs.readFileSync(zcodeFile, 'utf8'));
+  assert.equal((zcode.hooks.events.SessionStart ?? []).flatMap((group) => group.hooks).filter(ours).length, 1, 'zcode must hold exactly one memory hook');
+  assert.equal(JSON.stringify(codex).includes('somewhere-else'), false, 'the previous install must not be left behind in the codex hooks');
+  assert.equal(JSON.stringify(zcode).includes('somewhere-else'), false, 'nor in the zcode hooks');
+});
+
 test('codex: the hook list holds exactly one entry of ours per event, however often setup runs', (t) => {
   const f = isolated(t);
   fs.writeFileSync(path.join(f.dirs.codex, 'config.toml'), 'model = "demo"\n');

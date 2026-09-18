@@ -338,8 +338,24 @@ function dshMcp(old) {
 
 // -------------------------------------------------------------- Hook bindings
 
-function ownsHook(hook) {
-  return Boolean(hook?.command?.includes(runnerPath)) || Boolean(Array.isArray(hook?.args) && hook.args.includes(runnerPath));
+/**
+ * Whether a hook entry is this system's, so binding a host replaces it instead of adding to it.
+ *
+ * This install's own path is not enough to recognise one. Moving the memory home or the program leaves
+ * entries that point at the *previous* install's `hook-runner.mjs`, and matching only the current path
+ * kept those entries and appended a second one - so every session event then fired two runners writing
+ * to the same store. Found on the real hosts, where a rebind left the Codex hooks with two entries per
+ * event. An entry counts as ours when it invokes a memory hook runner *and* names this host, which is
+ * what both the previous and the current declaration do; a runner for another host is left for that
+ * host's own run to replace.
+ */
+function ownsHook(hook, host) {
+  const texts = [hook?.command, hook?.commandWindows, ...(Array.isArray(hook?.args) ? hook.args : [])]
+    .filter((value) => typeof value === 'string');
+  if (texts.some((text) => text.includes(runnerPath))) return true;
+  const mentionsRunner = texts.some((text) => /(?:^|[\\/"'\s])hook-runner\.mjs(?:["'\s]|$)/.test(text));
+  const mentionsHost = texts.some((text) => new RegExp(`(?:^|[\\s"'])${host}(?:["'\\s]|$)`).test(text));
+  return mentionsRunner && mentionsHost;
 }
 function hookDeclaration(host, zcode) {
   if (zcode) return { type: 'process', command: process.execPath, args: [runnerPath, host, '--home', memoryHome], timeoutMs: 90000 };
@@ -356,7 +372,7 @@ function hooksJson(file, old, host, events, zcode = false) {
   let touched = false;
   for (const event of events) {
     const groups = Array.isArray(table[event]) ? table[event] : [];
-    const retained = groups.map((group) => ({ ...group, hooks: (group.hooks ?? []).filter((hook) => !ownsHook(hook)) })).filter((group) => group.hooks.length);
+    const retained = groups.map((group) => ({ ...group, hooks: (group.hooks ?? []).filter((hook) => !ownsHook(hook, host)) })).filter((group) => group.hooks.length);
     const next = uninstall ? retained : [...retained, { hooks: [hookDeclaration(host, zcode)] }];
     if (JSON.stringify(next) !== JSON.stringify(groups)) touched = true;
     if (next.length) table[event] = next; else delete table[event];
