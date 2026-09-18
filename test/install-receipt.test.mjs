@@ -112,6 +112,57 @@ test('a receipt whose rows are all usable is still read in full', (t) => {
   assert.deepEqual(Object.keys(parsed.files).sort(), [only, '/host/second'].sort());
 });
 
+test('a row without a usable label makes the whole receipt unusable', (t) => {
+  // The label is what attributes a row to a host, and `setup --uninstall` picks the rows it may
+  // restore with `row.label.startsWith(...)`. A row that cannot be attributed therefore has to be
+  // refused where it is read: letting it through defers the failure to a TypeError inside the one
+  // path that restores a user's configuration, which is the worst place to discover it.
+  for (const [label, row] of [
+    ['no label', { before: 'a', after: 'b' }],
+    ['a null label', { label: null, before: 'a', after: 'b' }],
+    ['a numeric label', { label: 7, before: 'a', after: 'b' }],
+    ['an empty label', { label: '', before: 'a', after: 'b' }],
+  ]) {
+    const { home, write, receipt } = fixture(t);
+    const raw = receipt();
+    raw.files['/host/unlabelled'] = row;
+    write(raw);
+    const parsed = readInstallReceipt(home);
+    assert.match(String(parsed.malformed), /"\/host\/unlabelled"/, label);
+    assert.deepEqual(parsed.files, {}, label);
+  }
+});
+
+test('the writer refuses to record a row without a label, and keeps one it is not given again', (t) => {
+  const { home, write, receipt } = fixture(t);
+  write(receipt());
+  const current = readInstallReceipt(home);
+  const [tracked] = Object.keys(receipt().files);
+
+  // Reader and writer have to agree. A writer able to produce a row its own reader calls
+  // untrustworthy would turn a programming mistake into a host that cannot be uninstalled.
+  assert.throws(() => mergeReceiptEntry(current, path.join(home, 'unlabelled.json'), { before: null, after: 'x' }, { memoryHome: home }), /label/);
+  assert.throws(() => mergeReceiptEntry(current, path.join(home, 'numeric.json'), { label: 7, before: null, after: 'x' }, { memoryHome: home }), /label/);
+  // A later record that does not carry the label forward keeps the one already recorded.
+  const kept = mergeReceiptEntry(current, tracked, { before: 'a', after: 'b' }, { memoryHome: home });
+  assert.equal(kept.files[tracked].label, 'codex-mcp');
+});
+
+test('a record written by this module is always readable by it', (t) => {
+  const { home, write, receipt } = fixture(t);
+  write(receipt());
+  const file = path.join(home, 'written.json');
+  // The round trip is the invariant the two sides share: anything the merge functions can write,
+  // the reader must be able to read back without calling it untrustworthy.
+  const draft = mergeReceiptEntry(readInstallReceipt(home), file, { label: 'codex-mcp', before: null, after: '{"a":1}' }, { memoryHome: home });
+  write(draft);
+  const parsed = readInstallReceipt(home);
+  assert.equal(parsed.malformed, null);
+  assert.equal(parsed.files[file].label, 'codex-mcp');
+  assert.equal(parsed.files[file].before, null);
+  assert.equal(parsed.files[file].after, '{"a":1}');
+});
+
 test('a round trip preserves the recorded bytes exactly', (t) => {
   const { home, write, receipt } = fixture(t);
   write(receipt());

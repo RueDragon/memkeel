@@ -350,6 +350,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A receipt row with no usable label was read as if it were fine.** The label is what attributes a
+  row to a host, and `setup --uninstall` selects the rows it may restore with
+  `row.label.startsWith(...)`, so a row whose label was absent or not a string could only fail later,
+  inside the one path that restores a user's configuration - as a `TypeError` rather than a refusal.
+  Such a row now makes the record unusable, naming the file, and `mergeReceiptEntry` refuses to write
+  an unlabelled row at all, so the writer and the reader agree on what a usable row is instead of each
+  defending itself separately. Every release that has written this file recorded a label, so no
+  legitimate record is refused by the stricter rule.
 - **`setup` rewrote host files outside its lock, and recorded the restore chain after the write.**
   Both halves lose the user's own configuration. The host-file read-modify-write sat outside the
   setup lock, which wrapped only the receipt update, so a `setup` racing another `setup` - or an
