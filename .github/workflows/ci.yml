@@ -111,6 +111,12 @@ jobs:
       # The image is built from the Dockerfile and run against synthetic data in $RUNNER_TEMP. There is
       # no registry, no push and no secret here: nothing leaves the runner, and the real knowledge base
       # and host configuration are never mounted into the container.
+      #
+      # The image ships Node and nothing else, so it has no `git`. Workspace identity is derived from a
+      # repository's common directory, which is why `workspace-add --cwd DIR` - and the `bootstrap
+      # --cwd` example in the Dockerfile's own comments - cannot work inside this container. The smoke
+      # seeds one topic route in the mounted configuration instead of deriving it, and the limitation is
+      # written down here rather than discovered by the next person who tries it.
       - name: build the image
         run: docker build --tag memkeel:ci .
 
@@ -119,26 +125,45 @@ jobs:
           set -euo pipefail
           work="$RUNNER_TEMP/memkeel-smoke"
           rm -rf "$work"
-          mkdir -p "$work/home" "$work/store" "$work/project"
-          # The only data in play: a note the event cites and the event itself.
-          printf '# Evidence\n\nA note the event can cite.\n' > "$work/store/evidence.md"
+          mkdir -p "$work/memory-home" "$work/store"
+          printf '# Container smoke\n\nA topic note the event can cite.\n' > "$work/store/evidence.md"
 
           # MEMKEEL_HOME is /memkeel in the image, so the mounts are the only paths involved.
-          run() { docker run --rm -v "$work/home:/memkeel" -v "$work/store:/store" -v "$work/project:/project" memkeel:ci "$@"; }
+          run() { docker run --rm -v "$work/memory-home:/memkeel" -v "$work/store:/store" memkeel:ci "$@"; }
 
           docker image inspect --format 'image id={{.Id}} size={{.Size}}' memkeel:ci
 
           run init --store /store
-          run doctor
-          workspace="$(run workspace-add --cwd /project | sed -n 's/.*"id": *"\([^"]*\)".*/\1/p')"
-          test -n "$workspace" || { echo "::error::the workspace id could not be read back"; exit 1; }
-          run register --topic "$workspace/smoke" --workspace "$workspace" --title "Container smoke"
+          # The route, the workspace note and the topic note are synthetic data, written rather than
+          # derived because deriving them is what needs git. `loadRoutes` reads the `workspace:` field of
+          # `<projectRoot>/workspace-*.md`, so that note is what makes the workspace resolvable.
+          docker run --rm --entrypoint node -v "$work/memory-home:/memkeel" memkeel:ci -e "
+            const fs = require('node:fs');
+            const file = '/memkeel/config.json';
+            const config = JSON.parse(fs.readFileSync(file, 'utf8'));
+            config.topics = [{ id: 'container-smoke/ci', workspace: 'container-smoke', title: 'Container smoke', aliases: [], path: 'topics/container-smoke--ci.md' }];
+            fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
+          "
+          mkdir -p "$work/store/topics" "$work/store/projects"
+          cat > "$work/store/projects/workspace-container-smoke.md" <<'WORKSPACE'
+          ---
+          type: workspace-state
+          scope: project
+          workspace: container-smoke
+          project: container-smoke
+          status: active
+          origin: ci-smoke
+          ---
+          # container-smoke
+          WORKSPACE
+          printf '# Container smoke\n\n<!-- AUTO-MANAGED:START -->\n<!-- AUTO-MANAGED:END -->\n' > "$work/store/topics/container-smoke--ci.md"
 
-          cat > "$work/project/event.json" <<EVENT
+          run doctor
+          cat > "$work/store/event.json" <<EVENT
           {
             "event_id": "20260918-dsh-container-smoke-01",
-            "workspace": "$workspace",
-            "topic": "$workspace/smoke",
+            "workspace": "container-smoke",
+            "topic": "container-smoke/ci",
             "agent": "dsh",
             "occurred_at": "2026-09-18T00:00:00.000Z",
             "evidence": ["evidence.md"],
@@ -147,12 +172,14 @@ jobs:
           }
           EVENT
 
-          run record --file /project/event.json
-          run recall --query "container smoke" --workspace "$workspace" | grep -q 'container-smoke\|records and recalls'
+          run record --file /store/event.json
+          run recall --query "container smoke" --workspace container-smoke | grep -q 'container-smoke\|records and recalls'
+          run index --force
           run doctor
 
           # Both mounts were written through: the journal note and the home's derived state exist on the
           # host side, which is what proves the image is not writing inside itself.
           test -n "$(find "$work/store/events" -name '*.md' -print -quit)"
-          test -f "$work/home/config.json"
+          test -f "$work/memory-home/config.json"
+          test -f "$work/memory-home/state/index.json"
           echo "container smoke: ok"
