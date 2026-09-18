@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { withLock, inspectLock } from '../lib/transport.mjs';
 
 // Regression coverage for the writer lock.
@@ -28,8 +28,16 @@ function dir(t) {
 }
 
 function deadPid() {
-  // Spawn a process that exits immediately, then reuse its pid: it is provably gone.
-  return spawnSync(process.execPath, ['-e', '']).pid;
+  // A pid that cannot be running, so "provably gone" is a fact rather than a probability. It is above
+  // every platform's pid ceiling - Linux caps pid_max at 2^22 - and the liveness check answers ESRCH for
+  // it on Windows and on POSIX alike.
+  //
+  // The previous version reused the pid of a process that had just exited, which is only *usually*
+  // dead: this suite runs its test files in parallel and each one spawns children, so that pid can be
+  // handed to another test's process between the two lines. When that happened, the refusal correctly
+  // reported a running holder and this test failed. It failed once in five full-suite runs and never in
+  // isolation, which is exactly the shape of that race.
+  return 2147483646;
 }
 
 function writeLock(root, record, ageMs = 0) {
