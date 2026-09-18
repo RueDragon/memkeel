@@ -713,9 +713,15 @@ never as proof that a release contains no personal information.
 ### Upgrade and deployment notes
 
 - **`setup` keeps a versioned installation receipt** at `<memory home>/state/setup-receipt.json`:
-  per file, the bytes from before the install and the bytes it wrote. `setup --uninstall` restores
-  from it and refuses any file that changed since, so treat it as private and do not edit it by
-  hand. An interrupted install is not fatal — re-running `setup` completes it. Every run also names
+  per file, the bytes from before the install, the bytes it last wrote, and — while a write is in
+  flight — the bytes that run intends to write. `setup --uninstall` restores from it and refuses any
+  file that changed since, so treat it as private and do not edit it by hand. Recovery after an
+  interruption is deliberately split in two. If the host file still holds the bytes the interrupted
+  run wrote, re-running `setup` accepts them as the installed state; if it holds the bytes recorded
+  before that run, the interrupted write is discarded — including a first install that never reached
+  its file, whose entry is dropped because there is nothing to restore. If it holds neither, nothing
+  is guessed and nothing is written: the run refuses, names the file and says a write was in flight,
+  and you restore it from the receipt's pre-install bytes or the setup backup. Every run also names
   what it did: `first-install`, `no-change`, `upgrade`, `rebind`, `refresh` or `uninstall`.
 - **`memkeel doctor` checks the install, not only the store.** It reports which of `--home` /
   `MEMKEEL_HOME` / the default chose the memory home, the receipt's state, whether the recorded

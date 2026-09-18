@@ -350,6 +350,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A refusal caused by an interrupted write did not say so.** When a host file matched none of the
+  states the receipt knows about and a write was in flight, the refusal read like an ordinary
+  concurrent edit - the one case where a reader has the least to go on. It now names the file, says a
+  write was in flight, and points at the recorded pre-install bytes and the setup backup, which are
+  what a human restores from. The recovery contract is written down in the same place: an interrupted
+  write settles itself when the file holds either the bytes that run intended or the state recorded
+  before it, and is refused - never guessed at - when it holds neither. Restoring from a prefix match
+  on the intended bytes would be a guess, and guessing wrong here destroys a file this program
+  promised to be able to put back. Both READMEs state the same split, and an interrupted uninstall is
+  covered too: it restores the same bytes and drops the same row when repeated.
 - **A host file could be left half-written by a crash.** The host write went straight into the target,
   and a direct write truncates the file before the replacement bytes exist, so a process killed
   mid-write left part of a configuration where the user's own file had been. The receipt made that

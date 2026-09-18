@@ -94,6 +94,17 @@ const BARRIERS = {
       }
       return real.call(fs, from, to, ...rest);
     };`,
+  // Kills the child while the receipt is being rewritten *after* a restore has already put the host file
+  // back, which is the uninstall half of the same window.
+  'crash-after-restore': `
+    const real = fs.renameSync;
+    fs.renameSync = function (from, to, ...rest) {
+      const host = process.env.MEMKEEL_BARRIER_HOST;
+      if (!fired && String(to) === process.env.MEMKEEL_BARRIER_TARGET && fs.existsSync(host) && !fs.readFileSync(host, 'utf8').includes('agent_memory')) {
+        process.kill(process.pid, 'SIGKILL');
+      }
+      return real.call(fs, from, to, ...rest);
+    };`,
 };
 function barrierPreload(root, kind) {
   const file = path.join(root, `barrier-${kind}.mjs`);
@@ -626,6 +637,54 @@ test('a run killed after the file was written but before the record commits heal
   const uninstall = run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy', '--uninstall');
   assert.equal(uninstall.status, 0, `the uninstall must be accepted: ${refusal(uninstall)}`);
   assert.equal(fs.readFileSync(config, 'utf8'), original, 'and it must restore the pre-install bytes');
+});
+
+test('an uninstall killed between restoring a file and recording it can simply be repeated', async (t) => {
+  const { root, host, home, env, run } = fixture(t);
+  const config = path.join(host, 'config.toml');
+  const original = 'model = "demo"\n';
+  fs.writeFileSync(config, original);
+  assert.equal(run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy').status, 0);
+  const receiptFile = path.join(home, 'state', 'setup-receipt.json');
+
+  const barrier = barrierPreload(root, 'crash-after-restore');
+  const killed = spawnBarriered(['setup', '--hosts', 'codex', '--no-hooks', '--no-policy', '--uninstall'], env, home, barrier, { MEMKEEL_BARRIER_TARGET: receiptFile, MEMKEEL_BARRIER_HOST: config });
+  assert.notEqual(await settled(killed), 0, 'the killed uninstall must not report success');
+  assert.equal(fs.readFileSync(config, 'utf8'), original, 'the host file had already been restored');
+  assert.ok(receiptOf(home).files[config], 'and the record had not been updated yet');
+  clearStaleLock(home);
+
+  // The restored file still matches the bytes the record says were there before the install, so the
+  // repeat restores the same bytes and drops the row: an interrupted uninstall needs no decision.
+  const again = run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy', '--uninstall');
+  assert.equal(again.status, 0, `the repeat must be accepted: ${refusal(again)}`);
+  assert.equal(fs.readFileSync(config, 'utf8'), original);
+  assert.equal(receiptOf(home).files[config], undefined, 'and the row must be gone afterwards');
+});
+
+test('a file that matches no known state while a write was in flight says so', (t) => {
+  const { host, home, run } = fixture(t);
+  const config = path.join(host, 'config.toml');
+  fs.writeFileSync(config, 'model = "demo"\n');
+  assert.equal(run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy').status, 0);
+
+  // An interrupted run left a transaction open and something else has changed the file since, so it
+  // matches neither the state that was recorded nor the bytes that run intended. Nothing here can be
+  // settled automatically - a first install that never reached its file could be dropped, and a file
+  // matching the intended bytes could be committed, but this is neither - so the refusal has to say
+  // what was expected rather than reading like an ordinary concurrent edit.
+  const receiptFile = path.join(home, 'state', 'setup-receipt.json');
+  const record = JSON.parse(fs.readFileSync(receiptFile, 'utf8'));
+  record.files[config].pending = { after: 'model = "demo"\n# intended\n', at: new Date().toISOString() };
+  fs.writeFileSync(receiptFile, JSON.stringify(record, null, 2));
+  fs.writeFileSync(config, 'model = "demo"\n# somebody else\n');
+
+  const result = run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy');
+  assert.equal(result.status, 1, 'a file that matches no known state must be refused');
+  assert.match(refusal(result), /was in flight/, 'the refusal must say a write was interrupted');
+  assert.match(refusal(result), /changed since setup/);
+  assert.equal(fs.readFileSync(config, 'utf8'), 'model = "demo"\n# somebody else\n', 'and nothing must be written');
+  assert.equal(readInstallReceipt(home).malformed, null, 'the record must stay usable for the recovery');
 });
 
 test('an edit that lands before the lock is taken survives the install', async (t) => {

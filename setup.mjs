@@ -133,9 +133,18 @@ function ownedState(row, present, old) {
  * Settle a transaction an interrupted run left open, before anything else looks at the file.
  *
  * The record holds both halves: the bytes the interrupted run intended to write, and the last state
- * known to be on disk. Whichever the file actually matches says what happened - the intended bytes
- * mean the write landed and only the commit was lost, the recorded state means the write never
- * happened. An unknown state is left alone and refused by the guard that follows.
+ * known to be on disk. Whichever the file actually matches says what happened, and the three outcomes
+ * are the whole recovery contract:
+ *
+ *   - the file matches the intended bytes: the write landed and only the commit was lost. The intent
+ *     becomes the installed state, automatically.
+ *   - the file matches the recorded state (or the pre-install bytes, or is absent where it should be):
+ *     the write never happened. The transaction is dropped, automatically, and a first install with
+ *     nothing committed yet drops its row entirely because there is nothing to restore.
+ *   - the file matches none of them: something this install cannot account for changed it - another
+ *     program, or a person. Nothing is guessed, nothing is written, and the guard that follows refuses
+ *     the file for a human to resolve. Restoring from a prefix match on the intended bytes would be a
+ *     guess, and guessing wrong here destroys a file this program promised to be able to put back.
  */
 function reconcilePending(current, file, state, meta) {
   const row = current.files[file];
@@ -176,8 +185,15 @@ function writeIfChanged(file, label, transform) {
     const row = settled.files[file];
     const state = ownedState(row, present, old);
     // Only an UNKNOWN state is refused. This is the same rule the uninstall preflight applies, so the
-    // two paths agree.
-    if (row && state === 'unknown') throw new Error('Configuration changed since setup; review and restore manually before rebinding: ' + file);
+    // two paths agree. When a transaction is open, the refusal says so: the difference between "the
+    // file this install wrote is intact and the record is behind it" (which the next run settles by
+    // itself) and "this file matches nothing this install knows about" is exactly what a human needs
+    // in order to decide, and the recorded pre-install bytes are what they restore from.
+    if (row && state === 'unknown') {
+      throw new Error(row.pending
+        ? 'Configuration changed since setup while a write was in flight; this file matches neither the recorded state nor the bytes that run intended. The pre-install bytes are in the receipt (and the setup backup): review the file and restore it by hand before rebinding: ' + file
+        : 'Configuration changed since setup; review and restore manually before rebinding: ' + file);
+    }
     // The transform runs here, on the bytes read in this critical section, so an edit that landed
     // before the lock was taken is part of its input instead of being overwritten by content derived
     // from an older read. The guard above still runs first, so a file this install does not own is
@@ -436,7 +452,11 @@ for (const id of selected) {
           const present = fs.existsSync(file);
           const onDisk = present ? fs.readFileSync(file, 'utf8') : null;
           const ours = onDisk === row.after || onDisk === row.before || (row.pending && onDisk === row.pending.after);
-          if (!ours) throw new Error(`Configuration changed since setup; preserve it and restore manually: ${file}`);
+          if (!ours) {
+            throw new Error(row.pending
+              ? `Configuration changed since setup while a write was in flight; preserve it and restore manually: ${file}`
+              : `Configuration changed since setup; preserve it and restore manually: ${file}`);
+          }
         }
         let draft = current;
         for (const [file, row] of owned) {
