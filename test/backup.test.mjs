@@ -303,6 +303,39 @@ test('a restore into a new directory reproduces the events and the query', (t) =
   assert.equal(fs.existsSync(path.join(result.store, 'evidence.md')), true);
 });
 
+test('a restore interrupted while repointing the configuration leaves no half-written config', (t) => {
+  const f = withEvent(t);
+  createBackup(f.config, { out: f.out });
+
+  // The rewrite is the one in-place write in a restore, and a direct write truncates the file first:
+  // a crash there leaves a configuration naming the old store inside a directory that otherwise looks
+  // like a completed restore. The write is matched by its content, so this holds whichever file the
+  // implementation writes first.
+  const real = fs.writeFileSync;
+  fs.writeFileSync = function (target, content, ...rest) {
+    if (String(content).includes('policyRoot')) {
+      real.call(fs, target, String(content).slice(0, 8));
+      const error = new Error('ENOSPC: no space left on device, write');
+      error.code = 'ENOSPC';
+      throw error;
+    }
+    return real.call(fs, target, ...rest);
+  };
+  t.after(() => { fs.writeFileSync = real; });
+
+  assert.throws(() => restoreBackup(f.out, { into: f.into }), /ENOSPC/);
+  const configFile = path.join(f.into, 'home', 'config.json');
+  // Either no configuration is left, or a whole one that no longer points at the source store. A
+  // partial one, or one still naming the store it was restored from, is the outcome this rewrite
+  // exists to prevent: the directory would look restored and read somebody else's data.
+  if (fs.existsSync(configFile)) {
+    let saved = null;
+    assert.doesNotThrow(() => { saved = JSON.parse(fs.readFileSync(configFile, 'utf8')); }, 'a failed rewrite must not leave a partial configuration');
+    const pointedAt = path.resolve(saved.vaultRoot ?? saved.memoryRoot ?? '');
+    assert.notEqual(pointedAt, path.resolve(f.config.vaultRoot), 'a destination must never be left pointing at the source store');
+  }
+});
+
 test('a restore refuses a tampered archive and writes nothing', (t) => {
   const f = withEvent(t);
   createBackup(f.config, { out: f.out });

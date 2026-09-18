@@ -350,6 +350,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A failed restore could leave a configuration pointing at the store it was restored from.** The
+  restore rewrote the restored `config.json` in place, so a failure part-way through left either a
+  partial file or - worse - a complete one still naming the source store. That is the one outcome the
+  rewrite exists to prevent, because the directory then looks restored and reads somebody else's data.
+  The rewrite is atomic now, and a failure removes the configuration instead of leaving a wrong one,
+  which is what the migration path already did. `atomicJson` also removes its temporary when the write
+  fails, so no partial JSON file is left beside the file it was replacing.
 - **A refusal caused by an interrupted write did not say so.** When a host file matched none of the
   states the receipt knows about and a write was in flight, the refusal read like an ordinary
   concurrent edit - the one case where a reader has the least to go on. It now names the file, says a
