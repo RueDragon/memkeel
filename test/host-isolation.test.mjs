@@ -145,6 +145,80 @@ for (const [host, seed] of HOSTS) {
   });
 }
 
+test('all four hosts rebind from one memory home to another, and the original bytes come back', (t) => {
+  // The whole cycle on every host at once, which is what moving a memory home looks like: bind the four,
+  // move the home, rebind the four, then undo it in the order that restores the bytes that were there
+  // first. The uninstall order matters and is the point of the second half: the second home's receipt
+  // records the state the first home left behind, so undoing the first home before the second would ask
+  // it to restore bytes its own record does not describe.
+  const f = isolated(t, { memoryHome: 'home-a' });
+  for (const [, seed] of HOSTS) seed(f);
+  const original = hostSnapshot(f);
+  const hosts = 'codex,claude,zcode,dsh';
+  const kindOf = (result) => JSON.parse(result.stdout).intent.kind;
+
+  const dry = f.run('setup', '--hosts', hosts, '--dry-run');
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.deepEqual(hostSnapshot(f), original, 'a dry run wrote to a host file');
+
+  const first = f.run('setup', '--hosts', hosts);
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(kindOf(first), 'first-install');
+  assert.ok(JSON.parse(first.stdout).changed > 0, 'binding four hosts changed no file');
+  const boundToA = hostSnapshot(f);
+  // Binding creates what it binds: hook lists, the shared policy block and the instruction files. The
+  // set of files is therefore larger than before, and the block is present in it.
+  assert.ok(Object.keys(boundToA).length > Object.keys(original).length, 'binding four hosts created no file');
+  const textA = Object.values(boundToA).join('\n');
+  assert.ok(textA.includes('AGENT-POLICY:START'), 'the shared policy block was not published');
+  assert.ok(textA.includes(path.basename(f.home)), 'no host file names the first home');
+
+  // The second memory home, with its own store: the home moved, so everything under it moved too.
+  const homeB = path.join(f.root, 'home-b');
+  const storeB = path.join(f.root, 'store-b');
+  const runB = (...args) => spawnSync(process.execPath, [cli, ...args, '--home', homeB], { env: f.env, encoding: 'utf8', windowsHide: true });
+  assert.equal(runB('init', '--store', storeB).status, 0);
+
+  // Without --force the four hosts refuse, because their entries name a different home, and a refusal
+  // may not have written anything on its way to saying no.
+  const refused = runB('setup', '--hosts', hosts);
+  assert.equal(refused.status, 1, `a rebind without --force must be refused: ${refused.stdout}`);
+  assert.deepEqual(hostSnapshot(f), boundToA, 'a refused rebind wrote to a host file');
+
+  const rebind = runB('setup', '--hosts', hosts, '--force');
+  assert.equal(rebind.status, 0, rebind.stderr);
+  // From the second home's own receipt this is a first install - it has no record of these files - which
+  // is exactly why it needs --force: what it is rewriting is a binding that names another home, and the
+  // refusal above is the same run saying so. The kind is not asserted, because it describes the second
+  // home's record rather than the user's situation.
+  assert.ok(JSON.parse(rebind.stdout).changed > 0, 'the rebind changed no host file');
+  const boundToB = hostSnapshot(f);
+  const textB = Object.values(boundToB).join('\n');
+  assert.equal(textB.includes(path.basename(f.home)), false, 'a host file still names the home that was replaced');
+  assert.ok(textB.includes(path.basename(homeB)), 'no host file names the new home');
+
+  // The rebind is what used to leave a host bound twice or bound to nothing, so the check afterwards is
+  // the assertion that matters: not ambiguous, nothing left over, and a second apply changes nothing.
+  const checkB = runB('setup', '--hosts', hosts, '--check');
+  assert.equal(checkB.status, 0, `a check after a four-host rebind must be accepted: ${checkB.stdout}`);
+  const again = runB('setup', '--hosts', hosts);
+  assert.equal(again.status, 0, again.stderr);
+  assert.equal(JSON.parse(again.stdout).changed, 0, 'a re-run against the bound home changed files');
+  assert.deepEqual(hostSnapshot(f), boundToB, 'a re-run rewrote a host file');
+
+  const uninstallB = runB('setup', '--hosts', hosts, '--uninstall');
+  assert.equal(uninstallB.status, 0, uninstallB.stderr);
+  assert.deepEqual(hostSnapshot(f), boundToA, 'undoing the second home must restore what the first home left');
+
+  const uninstallA = f.run('setup', '--hosts', hosts, '--uninstall');
+  assert.equal(uninstallA.status, 0, uninstallA.stderr);
+  assert.deepEqual(hostSnapshot(f), original, 'undoing the first home must restore the original bytes exactly');
+
+  // Isolation, asserted rather than assumed: the environment points MEMKEEL_HOME at a directory that
+  // does not exist, so a run that ignored --home would have written there instead.
+  assert.equal(fs.existsSync(path.join(f.root, 'wrong-home')), false, 'a run fell back to MEMKEEL_HOME instead of --home');
+});
+
 test('codex: the hook list holds exactly one entry of ours per event, however often setup runs', (t) => {
   const f = isolated(t);
   fs.writeFileSync(path.join(f.dirs.codex, 'config.toml'), 'model = "demo"\n');
