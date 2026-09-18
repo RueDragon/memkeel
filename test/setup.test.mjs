@@ -4,25 +4,110 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { withLock } from '../lib/transport.mjs';
+import { readInstallReceipt } from '../lib/install-receipt.mjs';
 const cli = fileURLToPath(new URL('../memory.mjs', import.meta.url));
 // A synchronous sleep, so a test can hold the setup lock while a spawned run is given time to reach
 // it. Atomics.wait blocks this process only; the child is a separate process and keeps running.
 function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
-/** Start a run without waiting for it, so the caller can watch what it does while it is blocked. */
-function spawnRun(args, env, home) {
-  const state = { code: null, stderr: '' };
-  const child = spawn(process.execPath, [cli, ...args, '--home', home], { env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
-  child.stderr.on('data', (chunk) => { state.stderr += chunk; });
-  child.on('close', (code) => { state.code = code; });
-  return state;
-}
 async function settled(state, ms = 30000) {
   const deadline = Date.now() + ms;
   while (state.code === null && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
   assert.notEqual(state.code, null, 'the spawned run did not finish');
   return state.code;
+}
+async function waitForFile(file, ms = 30000) {
+  const deadline = Date.now() + ms;
+  while (!fs.existsSync(file) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(fs.existsSync(file), true, `the child never reached ${path.basename(file)}`);
+}
+
+// A child-side barrier, so a test can force an exact interleaving instead of hoping for one.
+//
+// The preload module is written into the test's own temp directory and loaded into the child with
+// `--import`, so nothing in the repository changes to make a race testable. It stops the child at a
+// chosen filesystem call until the test releases it, which turns "the child is probably about to
+// take the lock" into "the child is stopped at the lock". Waiting on that handshake is what makes
+// the assertions below about the boundary between reading, deciding and writing rather than about
+// how fast this machine happens to be.
+const BARRIERS = {
+  // Stops the child immediately before its first attempt to acquire the setup lock.
+  lock: `
+    const real = fs.openSync;
+    fs.openSync = function (target, flags, ...rest) {
+      const isSetupLock = path.basename(String(target)) === 'writer.lock' && path.basename(path.dirname(String(target))) === 'setup-lock';
+      if (!fired && isSetupLock && String(flags).includes('wx')) { fire(); }
+      return real.call(fs, target, flags, ...rest);
+    };`,
+  // Stops the child immediately before it writes the host file it is installing into, which is the
+  // point a crash would land on: after the restore chain is recorded, before the file is replaced.
+  'host-write': `
+    const real = fs.writeFileSync;
+    fs.writeFileSync = function (target, ...rest) {
+      if (!fired && String(target) === process.env.MEMKEEL_BARRIER_TARGET) { fire(); }
+      return real.call(fs, target, ...rest);
+    };`,
+  // Kills the child at that same point, which is what a crash does: no `catch`, no `finally`, no
+  // commit. SIGKILL rather than a failed write, because a failed write lets the process clean up
+  // after itself and a read-only bit does not stop the write at all when the tests run as root.
+  'crash-host-write': `
+    const real = fs.writeFileSync;
+    fs.writeFileSync = function (target, ...rest) {
+      if (!fired && String(target) === process.env.MEMKEEL_BARRIER_TARGET) process.kill(process.pid, 'SIGKILL');
+      return real.call(fs, target, ...rest);
+    };`,
+  // Kills the child while the receipt is being rewritten *after* the host file already carries the
+  // binding: the state an interrupted upgrade leaves, where the file is new and the record is not.
+  // The guard keeps it from firing on the write-ahead receipt of a first install.
+  'crash-before-commit': `
+    const real = fs.renameSync;
+    fs.renameSync = function (from, to, ...rest) {
+      const host = process.env.MEMKEEL_BARRIER_HOST;
+      if (!fired && String(to) === process.env.MEMKEEL_BARRIER_TARGET && fs.existsSync(host) && fs.readFileSync(host, 'utf8').includes('agent_memory')) {
+        process.kill(process.pid, 'SIGKILL');
+      }
+      return real.call(fs, from, to, ...rest);
+    };`,
+};
+function barrierPreload(root, kind) {
+  const file = path.join(root, `barrier-${kind}.mjs`);
+  fs.writeFileSync(file, `
+import fs from 'node:fs';
+import path from 'node:path';
+const signal = process.env.MEMKEEL_BARRIER_SIGNAL;
+const release = process.env.MEMKEEL_BARRIER_RELEASE;
+let hits = 0;
+let fired = false;
+function fire() {
+  hits += 1;
+  // Which occurrence of the hooked call to stop at, so a file that is bound twice in one run can be
+  // interrupted at the second transform rather than the first.
+  if (hits < Number(process.env.MEMKEEL_BARRIER_AT ?? 1)) return;
+  fired = true;
+  fs.writeFileSync(signal, 'reached');
+  const deadline = Date.now() + 60000;
+  while (!fs.existsSync(release) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+}
+${BARRIERS[kind]}
+`);
+  return { url: pathToFileURL(file).href, signal: path.join(root, `${kind}-reached`), release: path.join(root, `${kind}-release`) };
+}
+/** Start a run under a barrier, so the test can choose the moment it proceeds. */
+function spawnBarriered(args, env, home, barrier, extraEnv = {}) {
+  const state = { code: null, stderr: '' };
+  // NODE_OPTIONS rather than a command-line flag: `memory.mjs setup` runs `setup.mjs` as a child
+  // process, so a flag passed on the command line would instrument the wrapper instead of the process
+  // that actually reads and writes the host files. The environment is what reaches that child.
+  const options = `${env.NODE_OPTIONS ? `${env.NODE_OPTIONS} ` : ''}--import=${barrier.url}`;
+  const child = spawn(process.execPath, [cli, ...args, '--home', home], {
+    env: { ...env, NODE_OPTIONS: options, MEMKEEL_BARRIER_SIGNAL: barrier.signal, MEMKEEL_BARRIER_RELEASE: barrier.release, ...extraEnv },
+    windowsHide: true,
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  child.stderr.on('data', (chunk) => { state.stderr += chunk; });
+  child.on('close', (code) => { state.code = code; });
+  return state;
 }
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-setup-'));
@@ -406,48 +491,67 @@ test('two concurrent setups both keep their receipt entries', async (t) => {
   assert.ok(files.some((file) => file.includes('zcode')), `no zcode entry in ${JSON.stringify(files)}`);
 });
 
-test('a host file that cannot be written still leaves its restore chain recorded', (t) => {
-  const { host, home, run } = fixture(t);
+test('an install killed before it writes the host file still leaves its restore chain recorded', async (t) => {
+  const { root, host, home, env } = fixture(t);
   const config = path.join(host, 'config.toml');
   const original = 'model = "demo"\n';
   fs.writeFileSync(config, original);
-  // The write fails at exactly the point an interruption would land: after the restore chain is
-  // recorded and before the host file is replaced. With the other order the host file was written
-  // first, so a failure here left our content in it with no `before` bytes recorded anywhere - and a
-  // re-run then skipped the file because it already matched, dropping the only way to restore the
-  // user's own configuration. Nothing about that loss was visible.
-  fs.chmodSync(config, 0o444);
-  try {
-    const result = run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy');
-    assert.notEqual(result.status, 0, 'a host file that cannot be written must fail the run');
-    assert.equal(fs.readFileSync(config, 'utf8'), original, 'the host file must be left as it was');
 
-    const receiptFile = path.join(home, 'state', 'setup-receipt.json');
-    assert.equal(fs.existsSync(receiptFile), true, 'the restore chain must be recorded before the file it describes');
-    const row = JSON.parse(fs.readFileSync(receiptFile, 'utf8')).files[config];
-    assert.ok(row, 'a failure between the two writes must not lose the restore chain');
-    assert.equal(row.before, original);
-    assert.match(row.after, /mcp_servers\.agent_memory/);
-  } finally {
-    // The failure above is a read-only bit; clearing it is what lets the fixture clean up.
-    fs.chmodSync(config, 0o644);
-  }
+  // A real crash at the exact point an interruption would land: after the restore chain is recorded
+  // and before the host file is replaced. SIGKILL, so no `catch` and no `finally` in the child can
+  // tidy up - a read-only bit fails the write and lets the process clean up after itself, which is a
+  // different thing, and it does not fail at all when the tests run as root.
+  const barrier = barrierPreload(root, 'crash-host-write');
+  const state = spawnBarriered(['setup', '--hosts', 'codex', '--no-hooks', '--no-policy'], env, home, barrier, { MEMKEEL_BARRIER_TARGET: config });
+
+  assert.notEqual(await settled(state), 0, 'a killed install must not report success');
+  assert.equal(fs.readFileSync(config, 'utf8'), original, 'the host file must be untouched');
+
+  const row = receiptOf(home).files[config];
+  assert.ok(row, 'the restore chain must be recorded before the file it describes');
+  assert.equal(row.before, original, 'and it must hold the bytes that were there before the install');
+  assert.equal(readInstallReceipt(home).malformed, null, 'the recorded chain must be usable after the crash');
+});
+
+test('an edit that lands before the lock is taken survives the install', async (t) => {
+  const { root, host, home, env } = fixture(t);
+  const config = path.join(host, 'config.toml');
+  fs.writeFileSync(config, 'model = "demo"\n');
+
+  const barrier = barrierPreload(root, 'lock');
+  const state = spawnBarriered(['setup', '--hosts', 'codex', '--no-hooks', '--no-policy'], env, home, barrier);
+
+  // The child is stopped immediately before its first attempt to take the setup lock, which is the
+  // last moment an edit can land without the child having seen it. Computing the new content from a
+  // read taken *before* the lock is what loses this edit: the run overwrites the file with content
+  // derived from bytes it no longer matches. The transform has to run inside the lock, on the bytes
+  // that are on disk once the lock is held.
+  await waitForFile(barrier.signal);
+  fs.appendFileSync(config, '# concurrent edit must survive\n');
+  fs.writeFileSync(barrier.release, '');
+
+  assert.equal(await settled(state), 0, state.stderr);
+  const after = fs.readFileSync(config, 'utf8');
+  assert.match(after, /# concurrent edit must survive/, 'an edit that landed before the lock must not be overwritten');
+  assert.match(after, /mcp_servers\.agent_memory/, 'and the binding must still be installed');
 });
 
 test('a setup waits for the setup lock instead of writing a host file under a live holder', async (t) => {
-  const { host, home, env } = fixture(t);
+  const { root, host, home, env } = fixture(t);
   const config = path.join(host, 'config.toml');
   const original = 'model = "demo"\n';
   fs.writeFileSync(config, original);
-  const state = spawnRun(['setup', '--hosts', 'codex'], env, home);
+  const barrier = barrierPreload(root, 'lock');
+  const state = spawnBarriered(['setup', '--hosts', 'codex', '--no-hooks', '--no-policy'], env, home, barrier);
 
-  // Hold the lock the setup path itself has to take before it may rewrite a host file. A run that
-  // writes anyway is the interleaving that lets a competing run judge a file it does not own yet:
-  // two runs could each read the receipt and the host file, write, and record, in either order.
+  // The handshake is what makes this a test of the boundary rather than of this machine's speed: the
+  // child has stopped at the lock, and it is released only while the lock is held by this process.
+  await waitForFile(barrier.signal);
   withLock(path.join(home, 'state', 'setup-lock'), () => {
-    sleepSync(1200);
+    fs.writeFileSync(barrier.release, '');
+    sleepSync(600);
     assert.equal(fs.readFileSync(config, 'utf8'), original, 'a host file must not be written while another holder has the setup lock');
-    assert.equal(state.code, null, 'the second run must be waiting for the lock, not already finished');
+    assert.equal(state.code, null, 'the blocked run must still be waiting for the lock, not already finished');
   });
 
   assert.equal(await settled(state), 0, state.stderr);
@@ -456,24 +560,88 @@ test('a setup waits for the setup lock instead of writing a host file under a li
 });
 
 test('an uninstall waits for the setup lock instead of restoring a host file under a live holder', async (t) => {
-  const { host, home, env, run } = fixture(t);
+  const { root, host, home, env, run } = fixture(t);
   const config = path.join(host, 'config.toml');
   const original = 'model = "demo"\n';
   fs.writeFileSync(config, original);
   assert.equal(run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy').status, 0);
   const installed = fs.readFileSync(config, 'utf8');
 
-  const state = spawnRun(['setup', '--hosts', 'codex', '--no-hooks', '--no-policy', '--uninstall'], env, home);
+  const barrier = barrierPreload(root, 'lock');
+  const state = spawnBarriered(['setup', '--hosts', 'codex', '--no-hooks', '--no-policy', '--uninstall'], env, home, barrier);
 
   // The same rule on the way back out. A restore that runs under someone else's lock can drop the
   // receipt entry for a file a competing install is recording at that moment, which leaves the file
   // installed with nothing recording how to restore it.
+  await waitForFile(barrier.signal);
   withLock(path.join(home, 'state', 'setup-lock'), () => {
-    sleepSync(1200);
+    fs.writeFileSync(barrier.release, '');
+    sleepSync(600);
     assert.equal(fs.readFileSync(config, 'utf8'), installed, 'a host file must not be restored while another holder has the setup lock');
     assert.equal(state.code, null, 'the uninstall must be waiting for the lock, not already finished');
   });
 
   assert.equal(await settled(state), 0, state.stderr);
   assert.equal(fs.readFileSync(config, 'utf8'), original, 'the uninstall must restore the pre-install bytes once it holds the lock');
+});
+
+test('an edit to the policy file that lands before its lock survives too', async (t) => {
+  const { root, host, home, env } = fixture(t);
+  const policyFile = path.join(host, 'AGENTS.md');
+  fs.writeFileSync(policyFile, '# House rules\n');
+
+  // The policy block is the second file codex owns, so this stops at the second lock: the MCP
+  // binding is written, the policy transform has not run. The transforms are not special cases of one
+  // another - this one appends a Markdown block instead of editing TOML or JSON - so the read inside
+  // the lock is checked here on a different transform rather than assumed from the first one.
+  const barrier = barrierPreload(root, 'lock');
+  const state = spawnBarriered(['setup', '--hosts', 'codex', '--no-hooks'], env, home, barrier, { MEMKEEL_BARRIER_AT: '2' });
+
+  await waitForFile(barrier.signal);
+  fs.appendFileSync(policyFile, '\n<!-- a concurrent edit -->\n');
+  fs.writeFileSync(barrier.release, '');
+
+  assert.equal(await settled(state), 0, state.stderr);
+  const after = fs.readFileSync(policyFile, 'utf8');
+  assert.match(after, /a concurrent edit/, 'an edit that landed before the policy lock must not be overwritten');
+  assert.match(after, /AGENT-POLICY:START/, 'and the policy block must still be installed');
+  assert.match(after, /# House rules/, 'and the file it was appended to must be preserved');
+});
+
+test('a ZCode file bound twice in one run never has a mid-run edit overwritten', async (t) => {
+  const { root, home, env } = fixture(t);
+  const host = path.join(root, 'zcode');
+  fs.mkdirSync(path.join(host, 'cli'), { recursive: true });
+  const config = path.join(host, 'cli', 'config.json');
+  fs.writeFileSync(config, JSON.stringify({ other: 42 }, null, 2) + '\n');
+
+  // ZCode puts its MCP server and its hooks in the same file, so the second transform has to work
+  // from what the first one committed. Stopping the run at the second lock is exactly that boundary:
+  // the MCP binding is on disk, the hooks transform has not run yet.
+  //
+  // This one pins the shared-file boundary rather than the order of read and lock: the guard refuses
+  // a mid-run edit here even before that was fixed, because the row for the file exists by then. What
+  // it does establish is that the first transform is committed before the second one reads - the
+  // transforms run one at a time, each seeing the previous one's bytes - and that a refusal leaves the
+  // edit and the unrelated host configuration exactly as they were.
+  const barrier = barrierPreload(root, 'lock');
+  const state = spawnBarriered(['setup', '--hosts', 'zcode', '--no-policy'], { ...env, ZCODE_HOME: host }, home, barrier, { MEMKEEL_BARRIER_AT: '2' });
+
+  await waitForFile(barrier.signal);
+  const mid = JSON.parse(fs.readFileSync(config, 'utf8'));
+  assert.ok(mid.mcp?.servers?.agent_memory, 'the first transform must have committed the MCP binding');
+  mid.userNote = 'must survive';
+  fs.writeFileSync(config, JSON.stringify(mid, null, 2) + '\n');
+  fs.writeFileSync(barrier.release, '');
+
+  // The hooks transform now finds a file that is neither the state it recorded writing nor the state
+  // it recorded replacing, so it refuses the host rather than write over the edit. Losing the edit
+  // while reporting success - which is what computing the content before the lock did - is the
+  // failure this pins down, so the exit code is checked as well as the bytes: refusing is the
+  // intended outcome here, silently proceeding is not.
+  assert.notEqual(await settled(state), 0, 'a file edited mid-run must be refused, not overwritten');
+  const after = JSON.parse(fs.readFileSync(config, 'utf8'));
+  assert.equal(after.userNote, 'must survive', 'the edit must still be there');
+  assert.ok(after.mcp?.servers?.agent_memory, 'and the first transform\'s binding must not be rolled back');
+  assert.equal(after.other, 42, 'and unrelated host configuration must be preserved');
 });

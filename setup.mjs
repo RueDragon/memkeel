@@ -76,6 +76,17 @@ const receipt = previousReceipt.exists ? { ...previousReceipt, files: { ...previ
 //
 // A dedicated lock root, so this never contends with the memory writer lock: `setup` rewrites other
 // applications' files, not the store, and a running checkpoint drain must not block it.
+//
+// What this lock does and does not cover is worth being exact about, because "setup is serialized"
+// would be too strong a claim. It lives inside one memory home, so it serializes the runs that share
+// that home - two `setup` runs, or a `setup` and an `--uninstall`, against the same host
+// configuration. It does not serialize two *different* memory homes that bind the same host file:
+// each takes its own lock, and each keeps its own receipt, so the second one finds bytes the first
+// one wrote and refuses them as an unknown state. That case is not made safe here; it needs `--force`
+// and a human deciding which home that host should point at. It also does not stop a writer that
+// never takes the lock at all, such as a person editing the file or another program rewriting it.
+// The transforms are written so that such an edit is refused rather than overwritten, but the lock
+// itself is a convention among cooperating runs, not a guarantee against every writer.
 const receiptLockRoot = path.join(memoryHome, 'state', 'setup-lock');
 
 /** Write a receipt draft, and keep the in-memory view in step with what is on disk. */
@@ -110,14 +121,13 @@ const receiptMeta = () => ({ format: RECEIPT_FORMAT, version: packageVersion, me
  * about what is installed. A competing run now waits, re-reads what the winner actually did, and
  * either finds nothing left to change or refuses a state this install does not own.
  */
-function writeIfChanged(file, next, label) {
+function writeIfChanged(file, label, transform) {
   // A dry run and a check both promise not to write, so they must not create the lock directory
   // either; the decision they report is made from the receipt the run already read.
   const write = !dryRun && !check;
   const apply = (current) => {
     const present = fs.existsSync(file);
     const old = present ? fs.readFileSync(file, 'utf8') : '';
-    if (old === next) { report.push({ label, file, changed: false }); return; }
     const row = current.files[file];
     // Only an UNKNOWN state is refused. `before` and `after` are both states this install is
     // responsible for, so a file still sitting in its pre-install state is safe to write - and that
@@ -127,6 +137,13 @@ function writeIfChanged(file, next, label) {
     // file did not exist, which is why absence has to be compared as absence and not as ''.
     const matchesBefore = row?.before === null ? !present : old === row?.before;
     if (row && old !== row.after && !matchesBefore) throw new Error('Configuration changed since setup; review and restore manually before rebinding: ' + file);
+    // The transform runs here, on the bytes read in this critical section, so an edit that landed
+    // before the lock was taken is part of its input instead of being overwritten by content derived
+    // from an older read. The guard above still runs first, so a file this install does not own is
+    // refused with the same message it always was.
+    const next = transform(file, old, present);
+    if (next === null) { skip(label, 'nothing to do'); return; }
+    if (next === old) { report.push({ label, file, changed: false }); return; }
     report.push({ label, file, changed: true, mode: dryRun ? 'dry-run' : check ? 'check' : 'write' });
     if (!write) return;
     wrote = true;
@@ -156,10 +173,19 @@ function writeIfChanged(file, next, label) {
 }
 function skip(label, reason) { report.push({ label, skipped: true, reason }); }
 
-// ---------------------------------------------------------------- MCP bindings
+// -------------------------------------------------------------------- Transform
+//
+// Every transform below takes the bytes to work from instead of reading them itself, because the
+// caller has to read them while it holds the setup lock. Content computed from a read taken *before*
+// the lock is content that can overwrite whatever landed in between: the run then writes bytes
+// derived from a file state that no longer exists, and an edit that was merely concurrent is silently
+// lost. The lock, the guard, the new content and the receipt row all come from one read inside the
+// lock.
+//
+// A transform returns the new file content, or null when this host needs nothing. `uninstall` is
+// still consulted, because the same transform describes how to take a binding back out.
 
-function codexMcp(file) {
-  const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+function codexMcp(old) {
   const section = `[mcp_servers.${mcpServerName}]`;
   const block = `${section}\ncommand = ${JSON.stringify(nodeBin)}\nargs = ${JSON.stringify([serverPath, '--home', memoryHome])}\nstartup_timeout_sec = 30\n`;
   if (old.includes(section)) {
@@ -174,15 +200,14 @@ function codexMcp(file) {
   if (uninstall) return null;
   return `${old.trimEnd()}${old.trim() ? '\n\n' : ''}${block}`;
 }
-function jsonMcp(file, mutate) {
-  const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+function jsonMcp(old, mutate) {
   const config = old ? JSON.parse(old) : {};
   const changed = mutate(config);
   if (changed === null) return null;
   return JSON.stringify(config, null, 2) + '\n';
 }
-function zcodeMcp(file) {
-  return jsonMcp(file, (config) => {
+function zcodeMcp(file, old) {
+  return jsonMcp(old, (config) => {
     if (uninstall) {
       if (!config.mcp?.servers?.[mcpServerName]) return null;
       delete config.mcp.servers[mcpServerName];
@@ -199,8 +224,8 @@ function zcodeMcp(file) {
     return true;
   });
 }
-function claudeMcp(file) {
-  return jsonMcp(file, (config) => {
+function claudeMcp(old) {
+  return jsonMcp(old, (config) => {
     config.mcpServers ??= {};
     if (uninstall) {
       if (!config.mcpServers[mcpServerName]) return null;
@@ -214,8 +239,7 @@ function claudeMcp(file) {
     return true;
   });
 }
-function dshMcp(file) {
-  const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+function dshMcp(old) {
   const marker = `id: mcp-agent-memory`;
   const block = `- insert:\n    - id: mcp-agent-memory\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: ${mcpServerName}\n        transport: stdio\n        command: '${nodeBin}'\n        args:\n          - '${serverPath}'\n          - '--home'\n          - ${yaml(memoryHome)}\n`;
   if (old.includes(marker)) {
@@ -244,8 +268,7 @@ function hookDeclaration(host, zcode) {
   if (host === 'codex') return { type: 'command', command, commandWindows: command, async: false, timeoutSec: 90 };
   return { type: 'command', command, timeout: 90 };
 }
-function hooksJson(file, host, events, zcode = false) {
-  const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+function hooksJson(file, old, host, events, zcode = false) {
   const config = old ? JSON.parse(old) : {};
   if (zcode) { config.hooks ??= {}; config.hooks.enabled ??= true; config.hooks.events ??= {}; }
   else config.hooks ??= {};
@@ -262,8 +285,7 @@ function hooksJson(file, host, events, zcode = false) {
   if (!touched) return null;
   return JSON.stringify(config, null, 2) + '\n';
 }
-function dshHookBlock(file) {
-  const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+function dshHookBlock(file, old) {
   const start = '# AGENT-MEMORY-HOOKS:START'; const end = '# AGENT-MEMORY-HOOKS:END';
   const block = `${start}\n- insert:\n    - id: agent-memory-hooks\n      name: '${pluginUrl}'\n      config:\n        runner: '${runnerPath}'\n        memoryHome: ${yaml(memoryHome)}\n        timeoutMs: 90000\n${end}`;
   if (old.includes(start)) {
@@ -283,8 +305,7 @@ function policyBlock(agent, policy) {
   const body = agent === 'claude' ? `@${policyFile.replaceAll('\\', '/')}` : policy;
   return `${POLICY_START}\nSource: ${policyFile.replaceAll('\\', '/')}; sha256: ${sha(policy)}; adapter: ${agent}.\n${body}\n${POLICY_END}`;
 }
-function policyFileFor(agent, file, policy) {
-  const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+function policyFileFor(agent, file, policy, old) {
   if (old.includes(POLICY_START)) {
     if (old.split(POLICY_START).length !== 2 || old.split(POLICY_END).length !== 2 || old.indexOf(POLICY_END) < old.indexOf(POLICY_START)) throw new Error(`Ambiguous policy markers in ${file}`);
     const block = uninstall ? '' : policyBlock(agent, policy);
@@ -295,29 +316,36 @@ function policyFileFor(agent, file, policy) {
 }
 
 // ------------------------------------------------------------------ Host table
+//
+// A host reports the files it owns together with the transform that produces each file's new content.
+// The transform is a function, not a value: it runs inside the setup lock on the bytes that are on
+// disk at that moment. Computing the content here, where the table is read, is what let a concurrent
+// edit be overwritten - the run would hold content derived from a file it had not yet taken the lock
+// for. ZCode in particular binds two things into one file (`cli/config.json` for both the MCP server
+// and the hooks), and each of those transforms now reads what the previous one committed.
 
 const HOSTS = {
   codex: {
     label: 'Codex',
     dir: () => process.env.CODEX_HOME ?? path.join(home, '.codex'),
-    mcp: (dir) => [{ file: path.join(dir, 'config.toml'), next: codexMcp(path.join(dir, 'config.toml')) }],
-    hooks: (dir) => [{ file: path.join(dir, 'hooks.json'), next: hooksJson(path.join(dir, 'hooks.json'), 'codex', ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'PreCompact', 'SessionEnd']) }],
+    mcp: (dir) => [{ file: path.join(dir, 'config.toml'), transform: (file, old) => codexMcp(old) }],
+    hooks: (dir) => [{ file: path.join(dir, 'hooks.json'), transform: (file, old) => hooksJson(file, old, 'codex', ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'PreCompact', 'SessionEnd']) }],
     policy: (dir) => path.join(dir, 'AGENTS.md'),
     legacy: () => null,
   },
   claude: {
     label: 'Claude Code',
     dir: () => process.env.CLAUDE_CONFIG_DIR ?? path.join(home, '.claude'),
-    mcp: () => [{ file: path.join(home, '.claude.json'), next: claudeMcp(path.join(home, '.claude.json')) }],
-    hooks: (dir) => [{ file: path.join(dir, 'settings.json'), next: hooksJson(path.join(dir, 'settings.json'), 'claude', ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'PreCompact', 'SessionEnd']) }],
+    mcp: () => [{ file: path.join(home, '.claude.json'), transform: (file, old) => claudeMcp(old) }],
+    hooks: (dir) => [{ file: path.join(dir, 'settings.json'), transform: (file, old) => hooksJson(file, old, 'claude', ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'PreCompact', 'SessionEnd']) }],
     policy: (dir) => path.join(dir, 'CLAUDE.md'),
     legacy: () => null,
   },
   zcode: {
     label: 'ZCode',
     dir: () => process.env.ZCODE_HOME ?? path.join(home, '.zcode'),
-    mcp: (dir) => [{ file: path.join(dir, 'cli', 'config.json'), next: zcodeMcp(path.join(dir, 'cli', 'config.json')) }],
-    hooks: (dir) => [{ file: path.join(dir, 'cli', 'config.json'), next: hooksJson(path.join(dir, 'cli', 'config.json'), 'zcode', ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'], true) }],
+    mcp: (dir) => [{ file: path.join(dir, 'cli', 'config.json'), transform: (file, old) => zcodeMcp(file, old) }],
+    hooks: (dir) => [{ file: path.join(dir, 'cli', 'config.json'), transform: (file, old) => hooksJson(file, old, 'zcode', ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop'], true) }],
     policy: (dir) => path.join(dir, 'AGENTS.md'),
     legacy: (dir) => path.join(dir, 'v2', 'setting.json'),
   },
@@ -325,9 +353,9 @@ const HOSTS = {
     label: 'dsh',
     dir: () => process.env.DSH_HOME ?? path.join(home, '.dsh'),
     mcp: (dir) => dshProfiles.filter((profile) => fs.existsSync(path.join(dir, 'profiles', profile, 'cordis.patch.yml')))
-      .map((profile) => ({ file: path.join(dir, 'profiles', profile, 'cordis.patch.yml'), next: dshMcp(path.join(dir, 'profiles', profile, 'cordis.patch.yml')) })),
+      .map((profile) => ({ file: path.join(dir, 'profiles', profile, 'cordis.patch.yml'), transform: (file, old) => dshMcp(old) })),
     hooks: (dir) => dshProfiles.filter((profile) => fs.existsSync(path.join(dir, 'profiles', profile, 'cordis.patch.yml')))
-      .map((profile) => ({ file: path.join(dir, 'profiles', profile, 'cordis.patch.yml'), next: dshHookBlock(path.join(dir, 'profiles', profile, 'cordis.patch.yml')) })),
+      .map((profile) => ({ file: path.join(dir, 'profiles', profile, 'cordis.patch.yml'), transform: (file, old) => dshHookBlock(file, old) })),
     policy: (dir) => path.join(dir, 'AGENTS.md'),
     legacy: () => null,
   },
@@ -382,34 +410,29 @@ for (const id of selected) {
       else restore(receipt);
       continue;
     }
-    for (const { file, next } of host.mcp(dir)) {
-      if (next === null) { skip(`${id}-mcp`, 'nothing to do'); continue; }
-      writeIfChanged(file, next, `${id}-mcp`);
-    }
+    for (const { file, transform } of host.mcp(dir)) writeIfChanged(file, `${id}-mcp`, transform);
     if (withHooks) {
-      const entries = id === 'dsh' ? [...host.hooks(dir), { file: path.join(memoryHome, 'dsh-hooks.json'), next: hooksJson(path.join(memoryHome, 'dsh-hooks.json'), 'dsh', ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop']) }] : host.hooks(dir);
-      for (const { file, next } of entries) {
-        if (next === null) { skip(`${id}-hooks`, 'nothing to do'); continue; }
-        writeIfChanged(file, next, `${id}-hooks${entries.length > 1 ? `-${path.basename(path.dirname(path.dirname(file)))}` : ''}`);
+      const entries = host.hooks(dir);
+      // dsh keeps its own hook declarations in a file inside the memory home, which is not part of
+      // the host's own directory tree.
+      if (id === 'dsh') entries.push({ file: path.join(memoryHome, 'dsh-hooks.json'), transform: (file, old) => hooksJson(file, old, 'dsh', ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop']) });
+      for (const { file, transform } of entries) {
+        writeIfChanged(file, `${id}-hooks${entries.length > 1 ? `-${path.basename(path.dirname(path.dirname(file)))}` : ''}`, transform);
       }
     }
     if (withPolicy) {
-      const file = host.policy(dir);
-      const next = policyFileFor(id, file, policy);
-      if (next === null) skip(`${id}-policy`, 'nothing to do');
-      else writeIfChanged(file, next, `${id}-policy`);
+      writeIfChanged(host.policy(dir), `${id}-policy`, (file, old) => policyFileFor(id, file, policy, old));
     }
     // ZCode ships its own memory feature. Leaving it enabled duplicates context, so it is switched
     // off on install. Uninstall restores the recorded bytes, so the host's own setting returns to
     // whatever the user had before we ever touched the file - we never replay our own preference.
     const legacyFile = host.legacy(dir);
     if (legacyFile && !uninstall && fs.existsSync(legacyFile)) {
-      const next = jsonMcp(legacyFile, (config) => {
+      writeIfChanged(legacyFile, `${id}-legacy-memory`, (file, old, present) => (present ? jsonMcp(old, (config) => {
         if (config.memoryEnabled === false) return null;
         config.memoryEnabled = false;
         return true;
-      });
-      if (next) writeIfChanged(legacyFile, next, `${id}-legacy-memory`);
+      }) : null));
     }
   } catch (error) {
     report.push({ label: id, refused: true, reason: error.message });

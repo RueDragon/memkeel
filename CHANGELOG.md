@@ -350,6 +350,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`setup` computed a host file's new content before it took the lock.** The lock, the guard and the
+  receipt row worked from one read, but the bytes to write came from an earlier one: the host table
+  called each transform as the table was read, so `codexMcp(config.toml)` and its siblings read the
+  file while the run held nothing at all. An edit landing in that gap - a person saving the file, or
+  another run writing it - was then overwritten by content derived from bytes that no longer existed,
+  and the run reported success. Each transform now runs inside the lock on the bytes just read, and
+  that one read feeds the guard, the transform, the receipt row and the write. The transforms are
+  passed as functions instead of values, which covers the MCP, hook, policy and legacy writes, and
+  ZCode's two bindings into one file, where the second transform now works from what the first one
+  committed. The lock's own coverage is stated where it lives: it serializes runs that share a memory
+  home, it does not serialize two different homes binding the same host file, and it is an agreement
+  between cooperating runs rather than a guarantee against a program that writes without taking it.
 - **A receipt row with no usable label was read as if it were fine.** The label is what attributes a
   row to a host, and `setup --uninstall` selects the rows it may restore with
   `row.label.startsWith(...)`, so a row whose label was absent or not a string could only fail later,

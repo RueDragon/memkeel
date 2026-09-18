@@ -151,10 +151,12 @@ liveness. It exits non-zero when something is genuinely wrong.
 
 A writer lock is never removed automatically, not even when its recorded holder is provably gone.
 `doctor` reports that case as stale so the diagnosis is visible, and a blocked write names the same
-holder and the file to delete, but the decision stays with you: confirm that no writer is running
-and delete the lock file yourself, rather than let a recovering process guess whether the holder it
-cannot see is really finished. Two writers in the ledger is the failure this trades against, and it
-is the worse one.
+holder and the file to delete, but the decision stays with you: stop every writer first — including
+anything that would start one again, such as a host hook that respawns a run — and then delete the
+lock file yourself, rather than let a recovering process guess whether the holder it cannot see is
+really finished. The lock is a file the runs agree to respect, so it excludes another run that takes
+it and does nothing about a program that rewrites the store without taking it. Two writers in the
+ledger is the failure this trades against, and it is the worse one.
 
 Then use it from any bound host, or from the shell:
 
