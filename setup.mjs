@@ -297,17 +297,27 @@ function claudeMcp(old) {
     return true;
   });
 }
+// The managed hooks block is delimited by comments at column 0, and the YAML item inside it also starts
+// at column 0. Anything in this file that looks for "the next top-level item" therefore has to treat the
+// start marker as a boundary too, or it reads into the block and cuts its opening marker out.
+const HOOKS_START = '# AGENT-MEMORY-HOOKS:START';
+const HOOKS_END = '# AGENT-MEMORY-HOOKS:END';
+
 function dshMcp(old) {
   const marker = `id: mcp-agent-memory`;
   const block = `- insert:\n    - id: mcp-agent-memory\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: ${mcpServerName}\n        transport: stdio\n        command: '${nodeBin}'\n        args:\n          - '${serverPath}'\n          - '--home'\n          - ${yaml(memoryHome)}\n`;
   if (old.includes(marker)) {
     if (!uninstall && old.includes(block.trim())) return null;
-    // A YAML sequence item is bounded by the next top-level "- " entry.
     const at = old.lastIndexOf('- insert:', old.indexOf(marker));
-    const rest = old.slice(at + 1);
-    const nextItem = rest.search(/\n- /);
-    const end = nextItem === -1 ? old.length : at + 1 + nextItem + 1;
     if (at < 0) throw new Error('Cannot safely locate existing dsh MCP block');
+    // A YAML sequence item ends at the next top-level "- " entry, or at the managed hooks block,
+    // whichever comes first. The hooks block's own "- insert:" line starts at column 0 as well, so the
+    // next "- " entry after this item is usually *inside* that block: reading to it deleted the START
+    // marker, and the hooks transform then appended a second block beside the orphaned END. The result
+    // still named the previous memory home and every later run refused the host as ambiguous.
+    const rest = old.slice(at + 1);
+    const boundaries = [rest.search(/\n- /), rest.indexOf(`\n${HOOKS_START}`)].filter((index) => index !== -1);
+    const end = boundaries.length ? at + 1 + Math.min(...boundaries) + 1 : old.length;
     if (!uninstall && !force) throw new Error('Existing MCP binding differs; use --force after review');
     return `${old.slice(0, at)}${uninstall ? '' : block}${old.slice(end)}`.replace(/\n{3,}/g, '\n\n');
   }
@@ -344,7 +354,7 @@ function hooksJson(file, old, host, events, zcode = false) {
   return JSON.stringify(config, null, 2) + '\n';
 }
 function dshHookBlock(file, old) {
-  const start = '# AGENT-MEMORY-HOOKS:START'; const end = '# AGENT-MEMORY-HOOKS:END';
+  const start = HOOKS_START; const end = HOOKS_END;
   const block = `${start}\n- insert:\n    - id: agent-memory-hooks\n      name: '${pluginUrl}'\n      config:\n        runner: '${runnerPath}'\n        memoryHome: ${yaml(memoryHome)}\n        timeoutMs: 90000\n${end}`;
   if (old.includes(start)) {
     if (old.split(start).length !== 2 || !old.includes(end) || old.split(end).length !== 2) throw new Error(`Ambiguous dsh hook markers in ${file}`);

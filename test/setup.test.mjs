@@ -527,6 +527,44 @@ test('two concurrent setups both keep their receipt entries', async (t) => {
   assert.ok(files.some((file) => file.includes('zcode')), `no zcode entry in ${JSON.stringify(files)}`);
 });
 
+test('rebinding dsh leaves one hooks block, one MCP item, and no stale home', (t) => {
+  const { root, home, env } = fixture(t);
+  const dsh = path.join(root, 'dsh');
+  const profile = path.join(dsh, 'profiles', 'headless', 'cordis.patch.yml');
+  fs.mkdirSync(path.dirname(profile), { recursive: true });
+  fs.writeFileSync(profile, '[]\n');
+  const dshEnv = { ...env, DSH_HOME: dsh };
+  const runWith = (targetHome, ...args) => spawnSync(process.execPath, [cli, ...args, '--home', targetHome], { env: dshEnv, encoding: 'utf8', windowsHide: true });
+  // The home is written into the file as a JSON-escaped scalar, so matching on the directory name is
+  // what distinguishes the two homes without depending on how the path is quoted.
+  const oldName = path.basename(home);
+  const newName = 'second-home';
+
+  assert.equal(runWith(home, 'setup', '--hosts', 'dsh').status, 0);
+  const second = path.join(root, 'second-home');
+  assert.equal(runWith(second, 'init').status, 0);
+  // `--force` because the binding already names the first home, which is exactly what an upgrade or a
+  // rebind looks like: the MCP item differs, so that transform rewrites it.
+  assert.equal(runWith(second, 'setup', '--hosts', 'dsh', '--force').status, 0);
+
+  const text = fs.readFileSync(profile, 'utf8');
+  const count = (needle) => text.split(needle).length - 1;
+  // The hooks block is delimited by comments at column 0, and the item inside it also starts at column
+  // 0. Treating the next "- " line as the end of the MCP item therefore cut the START marker out of the
+  // file, after which the hooks transform appended a second block: the old hook item stayed behind
+  // pointing at the previous home, and every later run refused the host as ambiguous.
+  assert.equal(count('# AGENT-MEMORY-HOOKS:START'), 1, 'the hooks block must not be duplicated');
+  assert.equal(count('# AGENT-MEMORY-HOOKS:END'), 1, 'and its markers must still be paired');
+  assert.equal(count('id: mcp-agent-memory'), 1, 'the MCP item must not be duplicated');
+  assert.equal(count('id: agent-memory-hooks'), 1, 'and neither must the hook item');
+  assert.equal(text.includes(newName), true, 'the file must name the new home');
+  assert.equal(text.includes(oldName), false, 'and it must not still name the previous one');
+
+  // The consequence that matters: the host was unusable for every later run.
+  const again = runWith(second, 'setup', '--hosts', 'dsh', '--check');
+  assert.equal(again.status, 0, `a check after a rebind must be accepted: ${refusal(again)}`);
+});
+
 test('an install killed before it writes the host file still leaves its restore chain recorded', async (t) => {
   const { root, host, home, env } = fixture(t);
   const config = path.join(host, 'config.toml');

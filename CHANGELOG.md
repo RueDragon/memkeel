@@ -350,6 +350,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Rebinding or upgrading dsh duplicated its hook block and kept the old memory home.** A second
+  `setup` for that host rewrote the profile file's MCP item up to the next top-level YAML entry - and the
+  managed hook block's own entry is one of those, sitting right after the marker comment that opens the
+  block. The opening marker was deleted with it, so the hook transform appended a second block after the
+  orphaned tail of the first: the file bound the plugin twice, once to the memory home being replaced,
+  and every later `setup` refused the host as ambiguous - `--check` included - until it was repaired by
+  hand. The item boundary now stops at the next entry *or* at the managed block, whichever comes first.
 - **A failed restore could leave a configuration pointing at the store it was restored from.** The
   restore rewrote the restored `config.json` in place, so a failure part-way through left either a
   partial file or - worse - a complete one still naming the source store. That is the one outcome the
