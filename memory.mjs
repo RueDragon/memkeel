@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { bootstrap, recall, record, consolidate, refreshIndex, loadRoutes, registerTopic, ensureWorkspace, VERSION } from './lib/core.mjs';
+import { bootstrap, consumptionStatus, recall, record, consolidate, refreshIndex, loadRoutes, registerTopic, ensureWorkspace, VERSION } from './lib/core.mjs';
 import { inside, inspectLock } from './lib/transport.mjs';
 import { createTransport } from './lib/storage/index.mjs';
 import { capture, decideHabit, maintain } from './lib/lifecycle.mjs';
@@ -322,11 +322,24 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       // The Obsidian CLI is optional: the default backend is the plain filesystem, so
       // an unconfigured path must not be reported as a missing file.
       const paths = [configPath, path.join(policyRoot, 'bootstrap.md'), ...(config.obsidianCli ? [config.obsidianCli] : []), path.join(sourceRoot, 'vendor/obsidian-mind/session-start.ts'),
-        inside(config.vaultRoot, config.habitsNote), ...config.topics.map((topic) => inside(config.vaultRoot, topic.path))];
+        inside(config.vaultRoot, config.habitsNote)];
       const missing = paths.filter((file) => !fs.existsSync(file));
+      // A registered topic's note is a projection, written by consolidation once that topic has events
+      // to project. A topic that was just registered therefore has no note yet, which is the state
+      // `register` followed by `doctor` used to report as a missing file and a failed run - on a store
+      // that was working exactly as documented. They are listed separately, with the step that builds
+      // them, instead of being counted as files whose absence means the store cannot work.
+      const unbuilt = config.topics.map((topic) => inside(config.vaultRoot, topic.path)).filter((file) => !fs.existsSync(file));
       const plansFile = path.join(policyRoot, 'state', 'captures.json');
       const plans = fs.existsSync(plansFile) ? JSON.parse(fs.readFileSync(plansFile, 'utf8')) : {};
-      const existingEvents = new Set(loadEvents(config).map((event) => event.event_id));
+      // A journal that cannot be read is corruption rather than a backlog, and it is reported as that
+      // instead of as an unhandled error: every count below depends on these bytes, and a reader has to
+      // be able to tell "there is work waiting" from "this cannot be read at all".
+      let events = [];
+      const ledger = { ok: true, error: null };
+      try { events = loadEvents(config); }
+      catch (error) { ledger.ok = false; ledger.error = error.message; }
+      const existingEvents = new Set(events.map((event) => event.event_id));
       const captures = { pending: Object.keys(plans).filter((id) => !existingEvents.has(id)) };
       // Both writer locks are reported with holder liveness. A lock that is merely in use is
       // not an unhealthy state (a drain can hold the hook-queue lock for minutes), while one
@@ -334,6 +347,10 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       // how a killed drain blocked every later checkpoint for seven hours unnoticed.
       const lock = inspectLock(path.join(policyRoot, 'state'));
       const checkpointLock = inspectLock(path.join(policyRoot, 'state/hook-queue'));
+      // The setup lock is the third writer lock, held while `setup` rewrites host files. It was
+      // invisible here, which is exactly the state an interrupted setup leaves behind: a lock whose
+      // holder is gone, refusing every later run, and nothing in this report to say so.
+      const setupLock = inspectLock(path.join(policyRoot, 'state', 'setup-lock'));
       // The restore chain, the home that was actually chosen, whether the recorded bindings still
       // point at that home, and whether the scripts they invoke still exist. A legacy or malformed
       // receipt is what makes a later `setup --uninstall` fail closed; an unexpected home is the
@@ -343,14 +360,51 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       const drift = bindingDrift(install, policyRoot);
       const launcher = launcherReport({ command: process.execPath, files: ['mcp-server.mjs', 'hook-runner.mjs', 'dsh-memory-plugin.mjs'].map((name) => path.join(sourceRoot, name)) });
       const receipt = { exists: install.exists, malformed: install.malformed, format: install.format, version: install.version, legacy: install.legacy, at: install.at, memoryHome: install.memoryHome, files: Object.keys(install.files).length };
-      const check = { version: VERSION, effectiveHome: { path: policyRoot, source: homeSource }, missing, captures, checkpoints: checkpointHealth(config, loadEvents(config)), lock, checkpointLock,
+      const checkpoints = checkpointHealth(config, events);
+      // Consumption is a different queue from the capture plans: events already in the ledger that
+      // consolidation has not consumed. `consumptionStatus` throws when its checkpoint names bytes that
+      // no longer match, which is corruption rather than a backlog, so the two never share one count.
+      let consumption = { pending: null, pendingTopics: [] };
+      const corrupt = [];
+      if (ledger.ok) {
+        try { consumption = consumptionStatus(config, events); }
+        catch (error) { corrupt.push({ what: 'consolidation checkpoint', error: error.message }); }
+      }
+      if (!ledger.ok) corrupt.push({ what: 'event journal', error: ledger.error });
+      if (receipt.malformed) corrupt.push({ what: 'installation receipt', error: receipt.malformed });
+      const unsettled = Object.entries(install.files).filter(([, row]) => row.pending).map(([file]) => file);
+      const locks = [['setup', setupLock], ['state', lock], ['hook-queue', checkpointLock]];
+      const stuck = locks.filter(([, row]) => row.stale).map(([name, row]) => `${name} (${row.file})`);
+      const pending = { events: consumption.pending, topics: consumption.pendingTopics, captures: captures.pending.length,
+        checkpoints: checkpoints.pending.length, unsettledInstalls: unsettled.length, unbuiltNotes: unbuilt.length };
+      // What a reader should act on, and what this section must not do: promise that pending work settles
+      // itself while a stale writer lock is in the way. Every writer refuses to enter while that lock
+      // exists, so the next run cannot consume anything until a human removes it, and saying otherwise
+      // would be claiming a self-healing that the lock prevents. Nothing in this report clears a lock,
+      // repairs a checkpoint or rewrites state to look better: a check that changes what it measures is
+      // not a check, and the diagnosis has to survive being wrong.
+      const recovery = [];
+      if (stuck.length) recovery.push({ state: 'blocked', what: `writer lock(s) whose holder is gone: ${stuck.join(', ')}`, next: `stop every writer, then delete ${locks.filter(([, row]) => row.stale).map(([, row]) => row.file).join(', ')} and repeat the command that was interrupted` });
+      if (unsettled.length) recovery.push({ state: stuck.length ? 'blocked' : 'pending', what: `${unsettled.length} host file(s) recorded as an interrupted write: ${unsettled.join(', ')}`,
+        next: stuck.length ? 'remove the stale lock first - the retry is refused while it is present' : 'repeat the same setup command: it settles when the file holds either the bytes that run intended or the state recorded before it' });
+      if (captures.pending.length) recovery.push({ state: 'pending', what: `${captures.pending.length} capture(s) are planned but not in the journal: ${captures.pending.slice(0, 5).join(', ')}`,
+        next: 'run the capture again with the same input, or maintenance --rebuild to recover them' });
+      if (consumption.pending) recovery.push({ state: stuck.length ? 'blocked' : 'pending', what: `${consumption.pending} recorded event(s) are not consumed yet (${consumption.pendingTopics.join(', ')})`,
+        next: stuck.length ? 'remove the stale lock first - consolidate is refused while it is present' : 'run consolidate: the backlog is consumed then, and no event is lost meanwhile' });
+      if (!checkpoints.healthy) recovery.push({ state: 'pending', what: `the checkpoint queue reports ${checkpoints.pending.length} unfinished session(s)`,
+        next: 'run maintenance to drain the queue; queued text is transport state, not durable storage' });
+      if (unbuilt.length) recovery.push({ state: 'pending', what: `${unbuilt.length} registered topic note(s) have not been built yet: ${unbuilt.join(', ')}`,
+        next: 'consolidate writes a topic note once that topic has events; maintenance --rebuild repairs a projection that was removed' });
+      for (const row of corrupt) recovery.push({ state: 'corrupt', what: `${row.what} cannot be read: ${row.error}`,
+        next: 'this needs a person: restore it from a backup or repair the named file. Nothing here rewrites or deletes it.' });
+      const check = { version: VERSION, effectiveHome: { path: policyRoot, source: homeSource }, missing, unbuilt, ledger, pending, recovery, captures, checkpoints, lock, checkpointLock, setupLock,
         receipt, bindingDrift: drift, launcher,
         routes: loadRoutes(config).map((row) => row.id), engine: 'obsidian-mind/af615d1 applyInjectionBudget (read-only adapter)', hostIntegration: 'File verification is not a host new-session smoke test.' };
       console.log(JSON.stringify(check, null, 2));
       // `unknown` drift is not unhealthy: a legacy receipt simply cannot answer the question, and
       // saying "ok" would be a guess while failing the run would be noise. Actual drift is not
       // healthy either, but it is not fatal to the store - it is reported for the user to fix.
-      if (missing.length || lock.stale || checkpointLock.stale || check.captures.pending.length || !check.checkpoints.healthy || receipt.malformed || !launcher.ok) process.exitCode = 1;
+      if (missing.length || stuck.length || pending.events || captures.pending.length || !checkpoints.healthy || receipt.malformed || !launcher.ok || corrupt.length) process.exitCode = 1;
     } else throw new Error(t('cli.error.unknownCommand', { command }));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

@@ -89,6 +89,22 @@ export function findRuntimeTypeScriptImports(files) {
   return hits;
 }
 
+/**
+ * One line describing a TAP test run: the counts, and the names of the first failures.
+ *
+ * The counts alone say that a run failed without saying what failed, and that is exactly the case where
+ * the name matters most: a suite that fails once in ten runs has to be nameable, or the next person
+ * re-runs it, sees green and concludes there was nothing to look for. This check reported "# fail 1" and
+ * nothing else for a flake that could not be reproduced afterwards, which is what the names are for. The
+ * list is truncated because the detail is one field in a report.
+ */
+export function testRunDetail(stdout, limit = 5) {
+  const text = String(stdout ?? '');
+  const summary = (text.match(/# (?:pass|fail) \d+/g) ?? []).join(' ');
+  const failed = (text.match(/^not ok \d+ - .*$/gm) ?? []).slice(0, limit).join(' | ');
+  return [summary, failed].filter(Boolean).join(' | ') || 'see output';
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: ROOT, encoding: 'utf8', windowsHide: true, ...options });
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
@@ -117,8 +133,7 @@ function main() {
   }
   if (!fast) {
     const result = run(process.execPath, ['--test', 'test/*.test.mjs'], { shell: false, maxBuffer: 64 * 1024 * 1024 });
-    const summary = (result.stdout.match(/# (?:pass|fail) \d+/g) ?? []).join(' ');
-    record('npm test', result.status === 0, summary || 'see output');
+    record('npm test', result.status === 0, testRunDetail(result.stdout));
   } else {
     record('npm test', true, 'skipped (--fast)');
   }

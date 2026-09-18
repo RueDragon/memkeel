@@ -11,10 +11,30 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  PACKAGE_FORBIDDEN, PACKAGE_REQUIRED, findRuntimeTypeScriptImports, inspectPackage, versionConsistency,
+  PACKAGE_FORBIDDEN, PACKAGE_REQUIRED, findRuntimeTypeScriptImports, inspectPackage, testRunDetail, versionConsistency,
 } from '../scripts/release-check.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+test('a failing test run is reported with the names of the tests that failed', () => {
+  // This gate reported "# fail 1" and nothing else for a run whose failure could not be reproduced
+  // afterwards: the counts say something went wrong, but a one-off flake is only fixable if it can be
+  // named, and by the time anyone looks the output is gone.
+  const tap = 'TAP version 13\nnot ok 1 - the first failure\nnot ok 2 - the second failure\n# tests 3\n# pass 1\n# fail 2\n';
+  const detail = testRunDetail(tap);
+  assert.match(detail, /# pass 1 # fail 2/, 'the counts stay in the detail');
+  assert.match(detail, /not ok 1 - the first failure/);
+  assert.match(detail, /not ok 2 - the second failure/);
+
+  // A green run adds no noise, and an output with nothing recognisable still says something usable.
+  assert.equal(testRunDetail('# tests 3\n# pass 3\n# fail 0\n'), '# pass 3 # fail 0');
+  assert.equal(testRunDetail(''), 'see output');
+
+  // Truncated on purpose: this is one field of a report, not a log dump.
+  const many = Array.from({ length: 9 }, (_, index) => `not ok ${index + 1} - failure ${index + 1}`).join('\n');
+  assert.equal(testRunDetail(many).split(' | ').length, 5);
+  assert.equal(testRunDetail(many, 2).split(' | ').length, 2);
+});
 
 test('a package missing a required document is rejected, and the missing file is named', () => {
   const complete = [...PACKAGE_REQUIRED];

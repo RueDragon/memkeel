@@ -350,6 +350,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`doctor` called a working store broken, and said nothing useful when it really was.** A registered
+  topic's note is written by consolidation, once that topic has events to project, so a topic that has
+  just been registered has no note yet - and `doctor` reported it as a missing file and exited non-zero.
+  That is the documented `register` then `doctor` sequence, failing on a store that was working as
+  documented. Registered topic notes are reported separately now, as projections waiting to be built,
+  with `maintenance --rebuild` as the step that restores one, and they no longer fail the run. A topic
+  whose events are waiting is still unhealthy, through the pending count.
+- **`doctor` reported a store as unhealthy without saying what was pending, or what to do about it.** It
+  counted capture plans and checkpoint sessions, but never the events that were recorded and not yet
+  consumed; it reported the store lock and the hook-queue lock, while the setup lock - the one an
+  interrupted `setup` leaves behind, refusing every later run - was invisible. The report now counts each
+  queue separately, names the setup lock with its holder's liveness, separates work that is waiting to be
+  consumed from state that cannot be read at all (`ledger`, plus a `corrupt` list saying what a person
+  has to do), and attaches the step that clears each finding. It also refuses to promise self-healing it
+  cannot deliver: while a stale writer lock exists, the hint for pending work sends the reader to that
+  lock first instead of saying the next run settles the backlog - every writer refuses to enter while it
+  is there. Nothing in the command changes what it reports: it does not clear a lock, repair a checkpoint
+  or rewrite a note it could not read, and the tests assert that by comparing those files byte for byte.
 - **The container could not run the commands its own documentation showed.** The image shipped Node and
   nothing else, so it had no `git` - and workspace identity is derived from a repository's common
   directory, which means `workspace-add --cwd DIR` and the `bootstrap --cwd` example in both the

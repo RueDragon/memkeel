@@ -145,9 +145,23 @@ file each host gets.
 memkeel doctor
 ```
 
-`doctor` reports the config path, missing expected files, pending captures, checkpoint
-health, and both writer locks (the store lock and the hook-queue lock) together with holder
-liveness. It exits non-zero when something is genuinely wrong.
+`doctor` reports the config path, the expected files that are absent, the registered topic notes that
+have not been built yet, pending captures, checkpoint health, and all three writer locks (the store
+lock, the hook-queue lock and the setup lock) together with holder liveness. It exits non-zero when
+something is genuinely wrong.
+
+What is waiting is reported as three different things, because they need three different answers.
+`pending` counts what is queued: events recorded but not yet consumed, captures planned but never
+recorded, checkpoint sessions that never finished, and topic notes not built yet. `recovery` turns each
+of those into the step that clears it. `ledger` says whether the journal could be read at all, and state
+that cannot be read is listed as `corrupt` with what a person has to do about it instead of being
+flattened into the backlog. A registered topic note that does not exist yet is not corruption and does
+not fail the run: consolidation writes it once the topic has events to project, and `maintenance
+--rebuild` restores it if it was removed. And the two are kept apart on purpose: when pending work is
+blocked by a stale writer lock, the hint sends you to the lock rather than promising that the next run
+settles the backlog by itself, because every writer refuses to enter while that lock exists. `doctor`
+changes nothing it reports - it does not clear a lock, repair a checkpoint or rewrite a note it could not
+read.
 
 A writer lock is never removed automatically, not even when its recorded holder is provably gone.
 `doctor` reports that case as stale so the diagnosis is visible, and a blocked write names the same
@@ -510,7 +524,7 @@ only here:
 | `experience-recall` / `context-recall` | Retrieve execution experience or short-term task contexts. No read ever increments usage or writes a cache. |
 | `check-operation --file INPUT.json` | Bounded static preflight for a proposed operation (kind, command, shell, cwd, boundary). Returns matched experiences and warnings — **not** permission, and not a guarantee that a command is safe. |
 | `audit` | Report the note index by type and list untyped historical sources. Historical claims require deliberate promotion. |
-| `doctor` | Health check: config and expected files, pending captures, checkpoint health, and both writer locks with holder liveness. |
+| `doctor` | Health check: config and expected files, unbuilt topic projections, pending work with the step that clears each item, what cannot be read (corrupt), and all three writer locks with holder liveness. Read-only: it changes nothing it reports. |
 
 ### Writing
 
