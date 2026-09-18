@@ -76,16 +76,40 @@ test('a receipt from before the format field is readable and marked legacy', (t)
   assert.equal(Object.keys(parsed.files).length, 1, 'the recorded bytes are what restore, so they must survive');
 });
 
-test('rows that cannot restore anything are dropped', (t) => {
+test('a row that cannot restore anything makes the whole receipt unusable', (t) => {
+  // Dropping the broken row instead leaves a partial restore chain: an uninstall would restore the
+  // files it still has rows for, report success, and leave our content in a file whose original
+  // bytes are now unrecoverable. The chain is only useful as a complete record, so one unusable row
+  // makes the record untrustworthy - and the reason names the row so it can be repaired on purpose.
+  for (const [label, row] of [
+    ['no after', { label: 'x', before: 'a' }],
+    ['an after that is not a string', { label: 'x', before: 'a', after: 42 }],
+    ['no before key at all', { label: 'x', after: 'a' }],
+    ['a before that is neither null nor a string', { label: 'x', before: 7, after: 'a' }],
+    ['not an object', 'nonsense'],
+    ['null', null],
+  ]) {
+    const { home, write, receipt } = fixture(t);
+    const raw = receipt();
+    raw.files['/host/broken'] = row;
+    write(raw);
+    const parsed = readInstallReceipt(home);
+    assert.equal(parsed.exists, true, label);
+    assert.match(String(parsed.malformed), /"\/host\/broken"/, label);
+    // A record that cannot be trusted must not be presented as usable rows.
+    assert.deepEqual(parsed.files, {}, `${label}: a partial restore chain is worse than none`);
+  }
+});
+
+test('a receipt whose rows are all usable is still read in full', (t) => {
   const { home, write, receipt } = fixture(t);
+  const [only] = Object.keys(receipt().files);
   const raw = receipt();
-  raw.files['no-after'] = { label: 'x', before: 'a' };
-  raw.files['after-not-a-string'] = { label: 'x', before: 'a', after: 42 };
-  raw.files['not-an-object'] = 'nonsense';
+  raw.files['/host/second'] = { label: 'claude-hooks', before: null, after: '{"hooks":{}}' };
   write(raw);
   const parsed = readInstallReceipt(home);
-  // Keeping an unusable row would make an uninstall believe it owns a file it has no original for.
-  assert.deepEqual(Object.keys(parsed.files), Object.keys(receipt().files));
+  assert.equal(parsed.malformed, null);
+  assert.deepEqual(Object.keys(parsed.files).sort(), [only, '/host/second'].sort());
 });
 
 test('a round trip preserves the recorded bytes exactly', (t) => {

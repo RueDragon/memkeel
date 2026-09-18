@@ -350,6 +350,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **One unusable row in the installation receipt made the whole restore chain look healthy.**
+  `readInstallReceipt` dropped any `files` row it could not restore from - one without a string
+  `after`, or without a `before` that is a string or null - and still reported `malformed: null`, so
+  a corrupt record passed every check. An uninstall would then restore the files it still had rows
+  for, report success, and leave memkeel's own content in a host file whose original bytes were
+  gone, with nothing said about it. A row that cannot restore anything now makes the whole record
+  unusable, naming each affected file, so `setup` refuses it and keeps the file for inspection and
+  `doctor` reports it as unhealthy. A receipt written by 1.0.0 always recorded `before` and `after`,
+  so this does not refuse one: it still reads as legacy but valid.
 - **A second writer could enter while a live holder owned the writer lock.** Recovering an orphaned
   lock meant verifying the recorded holder and then renaming the file aside, and those are two
   steps. One contender could read a dead holder's record while another contender created a fresh,
