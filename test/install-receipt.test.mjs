@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { RECEIPT_FORMAT, bindingDrift, describeIntent, dropReceiptEntry, launcherReport, mergeReceiptEntry, readInstallReceipt, receiptPath } from '../lib/install-receipt.mjs';
+import { RECEIPT_FORMAT, beginReceiptEntry, bindingDrift, clearPending, commitPending, describeIntent, dropReceiptEntry, launcherReport, mergeReceiptEntry, readInstallReceipt, receiptPath } from '../lib/install-receipt.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-receipt-'));
@@ -161,6 +161,78 @@ test('a record written by this module is always readable by it', (t) => {
   assert.equal(parsed.files[file].label, 'codex-mcp');
   assert.equal(parsed.files[file].before, null);
   assert.equal(parsed.files[file].after, '{"a":1}');
+});
+
+test('a pending transaction records the intent without claiming an installed state', (t) => {
+  const { home, write, receipt } = fixture(t);
+  write(receipt());
+  const current = readInstallReceipt(home);
+  const [tracked] = Object.keys(receipt().files);
+  const installed = current.files[tracked].after;
+
+  // The upgrade case: what is on disk is the state the record already describes, and the new bytes are
+  // only an intention until they have been read back. Advancing `after` here is what left an
+  // interrupted upgrade matching neither state.
+  const begun = beginReceiptEntry(current, tracked, { label: 'codex-mcp', intended: 'model = "new"\n' }, { memoryHome: home });
+  assert.equal(begun.files[tracked].after, installed, 'the installed state must not move until the write is confirmed');
+  assert.equal(begun.files[tracked].pending.after, 'model = "new"\n');
+  assert.ok(begun.files[tracked].pending.at);
+  assert.equal(begun.files[tracked].before, current.files[tracked].before, 'the restore bytes are untouched');
+
+  write(begun);
+  assert.equal(readInstallReceipt(home).malformed, null, 'a record with an open transaction is readable');
+
+  const committed = commitPending(readInstallReceipt(home), tracked, { memoryHome: home });
+  assert.equal(committed.files[tracked].after, 'model = "new"\n');
+  assert.equal(committed.files[tracked].pending, null);
+  write(committed);
+  assert.equal(readInstallReceipt(home).malformed, null);
+
+  // Abandoning it instead leaves the state that is really on disk.
+  const cleared = clearPending(begun, tracked, { memoryHome: home });
+  assert.equal(cleared.files[tracked].after, installed);
+  assert.equal(cleared.files[tracked].pending, null);
+});
+
+test('a first install records its intent without an installed state to fall back on', (t) => {
+  const { home, write, receipt } = fixture(t);
+  write(receipt());
+  const file = path.join(home, 'fresh.json');
+  const current = readInstallReceipt(home);
+
+  const begun = beginReceiptEntry(current, file, { label: 'codex-mcp', before: 'original\n', intended: 'installed\n' }, { memoryHome: home });
+  assert.equal(begun.files[file].after, null, 'nothing has been installed yet, so there is no installed state');
+  assert.equal(begun.files[file].before, 'original\n');
+  assert.equal(begun.files[file].pending.after, 'installed\n');
+  write(begun);
+  assert.equal(readInstallReceipt(home).malformed, null, 'a first install in flight must be readable, or the crash cannot be recovered from');
+
+  const committed = commitPending(readInstallReceipt(home), file, { memoryHome: home });
+  assert.equal(committed.files[file].after, 'installed\n');
+  assert.equal(committed.files[file].pending, null);
+
+  // Clearing this one cannot work: with nothing installed and no transaction left, the row would
+  // describe no state at all, so the caller has to drop the row instead. That is the case a first
+  // install that never reached the file leaves behind.
+  assert.throws(() => clearPending(begun, file, { memoryHome: home }), /drop it instead/);
+  const dropped = dropReceiptEntry(begun, file, { memoryHome: home });
+  assert.equal(dropped.files[file], undefined);
+});
+
+test('a row that claims no installed state without a transaction is unusable', (t) => {
+  for (const [label, row] of [
+    ['a null after and no pending', { label: 'codex-mcp', before: 'a', after: null }],
+    ['a pending that is not an object', { label: 'codex-mcp', before: 'a', after: null, pending: 'soon' }],
+    ['a pending with no bytes', { label: 'codex-mcp', before: 'a', after: null, pending: { at: '2026-09-18T00:00:00.000Z' } }],
+  ]) {
+    const { home, write, receipt } = fixture(t);
+    const raw = receipt();
+    raw.files['/host/half.json'] = row;
+    write(raw);
+    const parsed = readInstallReceipt(home);
+    assert.match(String(parsed.malformed), /"\/host\/half.json"/, label);
+    assert.deepEqual(parsed.files, {}, label);
+  }
 });
 
 test('a round trip preserves the recorded bytes exactly', (t) => {

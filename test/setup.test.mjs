@@ -23,6 +23,24 @@ async function waitForFile(file, ms = 30000) {
   assert.equal(fs.existsSync(file), true, `the child never reached ${path.basename(file)}`);
 }
 
+/**
+ * The documented recovery after a killed run: a crash mid-write leaves the setup lock behind, and
+ * nothing removes it automatically. Doing it here is part of the test rather than a workaround - it
+ * asserts that the lock is left for a human (the fail-closed behaviour) and then clears it the way the
+ * refusal message tells the user to.
+ */
+function clearStaleLock(home) {
+  const lock = path.join(home, 'state', 'setup-lock', 'writer.lock');
+  assert.equal(fs.existsSync(lock), true, 'a run killed while it held the lock must leave it behind');
+  fs.rmSync(lock, { force: true });
+}
+
+/** Why a run refused, which `setup` reports per host instead of on stderr. */
+function refusal(result) {
+  try { return JSON.stringify(JSON.parse(result.stdout).report.filter((row) => row.refused)); }
+  catch { return result.stderr || '(no output)'; }
+}
+
 // A child-side barrier, so a test can force an exact interleaving instead of hoping for one.
 //
 // The preload module is written into the test's own temp directory and loaded into the child with
@@ -511,6 +529,96 @@ test('an install killed before it writes the host file still leaves its restore 
   assert.ok(row, 'the restore chain must be recorded before the file it describes');
   assert.equal(row.before, original, 'and it must hold the bytes that were there before the install');
   assert.equal(readInstallReceipt(home).malformed, null, 'the recorded chain must be usable after the crash');
+});
+
+test('an upgrade interrupted before it lands the file can still be retried and uninstalled', async (t) => {
+  const { root, host, home, env, run } = fixture(t);
+  const config = path.join(host, 'config.toml');
+  const original = 'model = "demo"\n';
+  fs.writeFileSync(config, original);
+  assert.equal(run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy').status, 0);
+
+  // Model a valid older install: the host file holds the previous version's binding, and the record
+  // describes exactly those bytes as the ones it wrote. The record has to keep describing that state
+  // while an upgrade is in flight, or the next run has nothing to recognise the file by.
+  const receiptFile = path.join(home, 'state', 'setup-receipt.json');
+  const older = receiptOf(home).files[config].after.replace('mcp-server.mjs', 'old-mcp-server.mjs');
+  fs.writeFileSync(config, older);
+  const record = JSON.parse(fs.readFileSync(receiptFile, 'utf8'));
+  record.files[config].after = older;
+  fs.writeFileSync(receiptFile, JSON.stringify(record, null, 2));
+
+  // The upgrade records what it intends and is killed before it lands the file: the disk still holds
+  // the older version. Recording the intent as the installed state is what leaves the file matching
+  // neither the old nor the new state, and every later run - and the uninstall - then refuses it.
+  const barrier = barrierPreload(root, 'crash-host-write');
+  const killed = spawnBarriered(['setup', '--hosts', 'codex', '--no-hooks', '--no-policy', '--force'], env, home, barrier, { MEMKEEL_BARRIER_TARGET: config });
+  assert.notEqual(await settled(killed), 0, 'the killed upgrade must not report success');
+  assert.equal(fs.readFileSync(config, 'utf8'), older, 'and it must not have written the host file');
+  assert.equal(readInstallReceipt(home).malformed, null, 'the record must still be usable after the crash');
+  clearStaleLock(home);
+
+  const retry = run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy', '--force');
+  assert.equal(retry.status, 0, `the retry must be accepted, not refused: ${refusal(retry)}`);
+  const after = fs.readFileSync(config, 'utf8');
+  assert.match(after, /mcp-server\.mjs/);
+  assert.doesNotMatch(after, /old-mcp-server\.mjs/, 'the retry must install the current binding');
+
+  const uninstall = run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy', '--uninstall');
+  assert.equal(uninstall.status, 0, `the uninstall must be accepted, not refused: ${refusal(uninstall)}`);
+  assert.equal(fs.readFileSync(config, 'utf8'), original, 'and it must restore the pre-install bytes');
+});
+
+test('a first install interrupted before it writes the file is retried without a false refusal', async (t) => {
+  const { root, host, home, env, run } = fixture(t);
+  const config = path.join(host, 'config.toml');
+  const original = 'model = "demo"\n';
+  fs.writeFileSync(config, original);
+
+  const barrier = barrierPreload(root, 'crash-host-write');
+  const killed = spawnBarriered(['setup', '--hosts', 'codex', '--no-hooks', '--no-policy'], env, home, barrier, { MEMKEEL_BARRIER_TARGET: config });
+  assert.notEqual(await settled(killed), 0, 'the killed install must not report success');
+  assert.equal(fs.readFileSync(config, 'utf8'), original, 'and it must not have written the host file');
+  const interrupted = readInstallReceipt(home);
+  assert.equal(interrupted.malformed, null, 'the half-started transaction must be readable');
+  clearStaleLock(home);
+
+  const retry = run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy');
+  assert.equal(retry.status, 0, `the retry must be accepted: ${refusal(retry)}`);
+  assert.match(fs.readFileSync(config, 'utf8'), /mcp_servers\.agent_memory/);
+  const committed = readInstallReceipt(home).files[config];
+  assert.equal(committed.pending ?? null, null, 'a completed install must not leave a transaction open');
+  assert.equal(committed.after, fs.readFileSync(config, 'utf8'), 'and it must record what it actually wrote');
+});
+
+test('a run killed after the file was written but before the record commits heals on the next run', async (t) => {
+  const { root, host, home, env, run } = fixture(t);
+  const config = path.join(host, 'config.toml');
+  const original = 'model = "demo"\n';
+  fs.writeFileSync(config, original);
+  const receiptFile = path.join(home, 'state', 'setup-receipt.json');
+
+  // Killed while the record is being rewritten *after* the host file already has the binding, which is
+  // the other half of the window: the file is new and the record is behind it.
+  const barrier = barrierPreload(root, 'crash-before-commit');
+  const killed = spawnBarriered(['setup', '--hosts', 'codex', '--no-hooks', '--no-policy'], env, home, barrier, { MEMKEEL_BARRIER_TARGET: receiptFile, MEMKEEL_BARRIER_HOST: config });
+  assert.notEqual(await settled(killed), 0, 'the killed run must not report success');
+  assert.match(fs.readFileSync(config, 'utf8'), /mcp_servers\.agent_memory/, 'the host file was written before the kill');
+  assert.equal(readInstallReceipt(home).malformed, null, 'the interrupted record must be readable');
+  clearStaleLock(home);
+
+  // The next run reconciles: it recognises the file as the state the interrupted run intended, makes
+  // that the recorded state, and reports nothing left to do.
+  const retry = run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy');
+  assert.equal(retry.status, 0, `the retry must be accepted: ${refusal(retry)}`);
+  assert.equal(JSON.parse(retry.stdout).changed, 0, 'the retry has nothing left to change');
+  const row = readInstallReceipt(home).files[config];
+  assert.equal(row.pending ?? null, null, 'the interrupted transaction must be closed');
+  assert.equal(row.after, fs.readFileSync(config, 'utf8'), 'and the record must match what is on disk');
+
+  const uninstall = run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy', '--uninstall');
+  assert.equal(uninstall.status, 0, `the uninstall must be accepted: ${refusal(uninstall)}`);
+  assert.equal(fs.readFileSync(config, 'utf8'), original, 'and it must restore the pre-install bytes');
 });
 
 test('an edit that lands before the lock is taken survives the install', async (t) => {

@@ -18,7 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { sha, atomicJson, withLock, writeFilePreservingMode } from './lib/transport.mjs';
-import { RECEIPT_FORMAT, describeIntent, dropReceiptEntry, mergeReceiptEntry, readInstallReceipt } from './lib/install-receipt.mjs';
+import { RECEIPT_FORMAT, beginReceiptEntry, clearPending, commitPending, describeIntent, dropReceiptEntry, readInstallReceipt } from './lib/install-receipt.mjs';
 
 const source = path.dirname(fileURLToPath(import.meta.url));
 // The receipt records which release wrote it, so a later run can tell an upgrade from a re-run.
@@ -113,6 +113,42 @@ function readReceiptLocked() {
 const receiptMeta = () => ({ format: RECEIPT_FORMAT, version: packageVersion, memoryHome, scope: selected });
 
 /**
+ * What the file on disk is, relative to what the record says this install did to it.
+ *
+ * `before` is the state from before the first install, `after` the last state this install is known to
+ * have written, and `pending` the bytes an interrupted run intended to write but had not read back.
+ * All three are states this install is responsible for. Anything else is somebody else's edit, and is
+ * refused rather than overwritten. A recorded `before` of null means the file did not exist, which is
+ * why absence has to be compared as absence rather than as an empty string.
+ */
+function ownedState(row, present, old) {
+  if (!row) return 'none';
+  if (present && row.after !== null && old === row.after) return 'after';
+  if (row.before === null ? !present : present && old === row.before) return 'before';
+  if (row.pending && present && old === row.pending.after) return 'pending';
+  return 'unknown';
+}
+
+/**
+ * Settle a transaction an interrupted run left open, before anything else looks at the file.
+ *
+ * The record holds both halves: the bytes the interrupted run intended to write, and the last state
+ * known to be on disk. Whichever the file actually matches says what happened - the intended bytes
+ * mean the write landed and only the commit was lost, the recorded state means the write never
+ * happened. An unknown state is left alone and refused by the guard that follows.
+ */
+function reconcilePending(current, file, state, meta) {
+  const row = current.files[file];
+  if (!row?.pending) return current;
+  if (state === 'pending') return commitPending(current, file, meta);
+  // A first install that never reached the file has nothing to restore, so the row goes with the
+  // transaction: keeping it would record a restore chain for a file this install never changed.
+  if (state === 'before' && row.after === null) return dropReceiptEntry(current, file, meta);
+  if (state === 'before' || state === 'after') return clearPending(current, file, meta);
+  return current;
+}
+
+/**
  * Read-modify-write one host file and its receipt row, under the setup lock.
  *
  * The lock has to cover the read and the decision, not just the receipt write. Two runs of `setup` -
@@ -120,6 +156,11 @@ const receiptMeta = () => ({ format: RECEIPT_FORMAT, version: packageVersion, me
  * bytes and then write in either order, which can leave a host file and the receipt disagreeing
  * about what is installed. A competing run now waits, re-reads what the winner actually did, and
  * either finds nothing left to change or refuses a state this install does not own.
+ *
+ * The receipt row is a two-phase transaction: the intent is recorded before the file is written and
+ * committed after the bytes are read back. Recording the intent as the installed state instead - which
+ * is what this used to do - left a file that matched neither the old state nor the recorded one, so a
+ * run killed mid-upgrade could be neither retried nor uninstalled.
  */
 function writeIfChanged(file, label, transform) {
   // A dry run and a check both promise not to write, so they must not create the lock directory
@@ -128,15 +169,15 @@ function writeIfChanged(file, label, transform) {
   const apply = (current) => {
     const present = fs.existsSync(file);
     const old = present ? fs.readFileSync(file, 'utf8') : '';
-    const row = current.files[file];
-    // Only an UNKNOWN state is refused. `before` and `after` are both states this install is
-    // responsible for, so a file still sitting in its pre-install state is safe to write - and that
-    // is what makes an interrupted install recoverable by running setup again. Anything else is
-    // someone else's edit and has to be reviewed by hand. This is the same rule the uninstall
-    // preflight already applies, so the two paths now agree. A recorded `before` of null means the
-    // file did not exist, which is why absence has to be compared as absence and not as ''.
-    const matchesBefore = row?.before === null ? !present : old === row?.before;
-    if (row && old !== row.after && !matchesBefore) throw new Error('Configuration changed since setup; review and restore manually before rebinding: ' + file);
+    // A transaction an earlier run left open is settled first, so the guard below judges the file
+    // against a record that describes what is actually there.
+    const settled = reconcilePending(current, file, ownedState(current.files[file], present, old), receiptMeta());
+    if (settled !== current && write) persistReceipt(settled);
+    const row = settled.files[file];
+    const state = ownedState(row, present, old);
+    // Only an UNKNOWN state is refused. This is the same rule the uninstall preflight applies, so the
+    // two paths agree.
+    if (row && state === 'unknown') throw new Error('Configuration changed since setup; review and restore manually before rebinding: ' + file);
     // The transform runs here, on the bytes read in this critical section, so an edit that landed
     // before the lock was taken is part of its input instead of being overwritten by content derived
     // from an older read. The guard above still runs first, so a file this install does not own is
@@ -152,19 +193,20 @@ function writeIfChanged(file, label, transform) {
     // profile writes `dsh-hooks-*`), and a colliding name silently reduced the backup to
     // whichever file happened to be written last.
     if (old) writeFilePreservingMode(path.join(backupDir, `${label}-${sha(file).slice(0, 8)}${path.extname(file) || '.txt'}`), old, { modeFrom: file });
-    // The restore chain is recorded BEFORE the file it describes, and that order is the point. A
-    // crash between the two writes now leaves the pre-install bytes on disk, so a later run still
-    // knows how to undo the install. The opposite order - which is what this used to do - loses them
-    // for good, because the file is already written and the next run finds it matching and skips it.
-    // That order existed because the guard once accepted only the installed state, so a receipt ahead
-    // of the file would have made every later run refuse it; the guard owns both states now.
-    persistReceipt(mergeReceiptEntry(current, file, { label, before: present ? old : null, after: next }, receiptMeta()));
+    // Phase one: record what this run intends to write, next to the state that is on disk right now.
+    // A crash after this point leaves a record that still describes the file, so the next run can
+    // retry and an uninstall can still restore the pre-install bytes.
+    let draft = beginReceiptEntry(settled, file, { label, before: present ? old : null, intended: next }, receiptMeta());
+    persistReceipt(draft);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') !== old) throw new Error(`Concurrent edit detected: ${file}`);
     // Replacing a host configuration must keep its permissions: these files can carry credentials,
     // and a rewrite that widened the mode would expose them.
     writeFilePreservingMode(file, next);
     if (fs.readFileSync(file, 'utf8') !== next) throw new Error(`Readback mismatch: ${file}`);
+    // Phase two: only now are the intended bytes the installed state.
+    draft = commitPending(draft, file, receiptMeta());
+    persistReceipt(draft);
   };
   // The lock is taken only when this run may write. A check that created a lock file would not be
   // the read-only operation it is documented to be.
@@ -387,10 +429,14 @@ for (const id of selected) {
       const restore = (current) => {
         const owned = Object.entries(current.files).filter(([, row]) => row.label.startsWith(`${id}-`));
         if (!owned.length) throw new Error('No installation receipt; restore legacy backups manually to avoid deleting unowned configuration');
-        // Preflight every file before restoring any of this host's configuration.
+        // Preflight every file before restoring any of this host's configuration. The intended bytes of
+        // an interrupted run are a state this install produced as well, so a file matching them can be
+        // restored like any other - refusing it would strand exactly the run that was interrupted.
         for (const [file, row] of owned) {
-          const onDisk = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
-          if (onDisk !== row.after && onDisk !== row.before) throw new Error(`Configuration changed since setup; preserve it and restore manually: ${file}`);
+          const present = fs.existsSync(file);
+          const onDisk = present ? fs.readFileSync(file, 'utf8') : null;
+          const ours = onDisk === row.after || onDisk === row.before || (row.pending && onDisk === row.pending.after);
+          if (!ours) throw new Error(`Configuration changed since setup; preserve it and restore manually: ${file}`);
         }
         let draft = current;
         for (const [file, row] of owned) {

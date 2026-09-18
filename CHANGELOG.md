@@ -350,6 +350,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An interrupted upgrade could be neither retried nor uninstalled.** The receipt recorded the bytes
+  a run *intended* to write as the file's installed state before writing them, so a run killed between
+  the two writes left a file matching neither the state from before the install nor the state the
+  record claimed. Every later `setup` refused it with "Configuration changed since setup" and
+  `--uninstall` refused it as well, leaving a host bound to a memory home with no way to undo it.
+  Keeping the original `before` bytes is not the same as keeping the state that was actually
+  installed, and the record now keeps both: the intent goes in as a pending transaction beside the
+  state on disk, and only a successful read-back promotes it to the installed state. The next run
+  settles whatever it finds - the intended bytes mean the write landed and only the commit was lost,
+  the recorded state means it never happened - so retrying and uninstalling both work, while an edit
+  this install cannot account for is still refused. A first install that never reached its file drops
+  its row, because there is nothing to restore.
 - **`setup` computed a host file's new content before it took the lock.** The lock, the guard and the
   receipt row worked from one read, but the bytes to write came from an earlier one: the host table
   called each transform as the table was read, so `codexMcp(config.toml)` and its siblings read the
