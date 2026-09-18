@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { VaultTransport, inside, atomicJson, existingMode, publishStoreFile, writeFilePreservingMode } from '../lib/transport.mjs';
+import { VaultTransport, inside, atomicJson, existingMode, isInsidePath, publishStoreFile, writeFilePreservingMode } from '../lib/transport.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lu-memory-transport-'));
@@ -333,12 +333,44 @@ test('a file symlink that leaves the store is refused, and neither the link nor 
   try { fs.symlinkSync(path.join(outside, 'note.md'), path.join(store, 'note.md'), 'file'); }
   catch (error) { t.skip(`this platform cannot create a symlink without elevation (${error.code})`); return; }
 
-  // `inside` checks the path before the final component is followed, so a link at the target itself is
-  // the one escape it cannot see on its own. Writing through such a link in place would truncate a file
-  // the user keeps outside the store; replacing it would turn the link into a regular file.
-  assert.throws(() => publishStoreFile(store, 'note.md', 'updated\n'), /outside the store through a symlink/);
+  // Writing through a link like this in place would truncate a file the user keeps outside the store;
+  // replacing the link would turn it into a regular file. The relative-path check refuses it while it
+  // resolves the link, and the publish refuses again if a link appears after that check - so this
+  // asserts that nothing is written, not which of the two layers said no.
+  assert.throws(() => publishStoreFile(store, 'note.md', 'updated\n'), /Symlink escapes root|outside the store through a symlink/);
   assert.equal(fs.readFileSync(path.join(outside, 'note.md'), 'utf8'), 'original\n', 'a refused publish must not touch the target');
   assert.equal(fs.lstatSync(path.join(store, 'note.md')).isSymbolicLink(), true, 'and must not replace the link');
+});
+
+test('a link at the target that leaves the store is refused on every platform', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-link-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = path.join(root, 'store');
+  const outside = path.join(root, 'shared');
+  fs.mkdirSync(store); fs.mkdirSync(outside);
+  const link = path.join(store, 'linked.md');
+  // The same refusal as the file symlink above, reached through a directory link, which Windows can
+  // create without elevation - so the escape policy is exercised on the platform where the file-symlink
+  // case skips rather than only on the CI runners.
+  try { fs.symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { t.skip(`this platform cannot create a directory link (${error.code})`); return; }
+
+  assert.throws(() => publishStoreFile(store, 'linked.md', 'x\n'), /Symlink escapes root/);
+  assert.deepEqual(fs.readdirSync(outside), [], 'nothing may be published outside the store');
+  assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'and the link must be left alone');
+});
+
+test('isInsidePath answers for a resolved path the way `inside` answers for a relative one', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-inside-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = path.join(root, 'store');
+  fs.mkdirSync(store);
+  assert.equal(isInsidePath(path.join(store, 'note.md'), store), true);
+  assert.equal(isInsidePath(store, store), true, 'the root itself is inside itself');
+  assert.equal(isInsidePath(path.join(store, '..', 'other.md'), store), false, 'a sibling is not inside');
+  assert.equal(isInsidePath(root, store), false, 'an ancestor is not inside');
+  // The bug a prefix comparison would have: the root's own name as a prefix of a neighbouring path.
+  assert.equal(isInsidePath(`${store}-sibling${path.sep}note.md`, store), false, 'a name that merely starts with the root is not inside');
 });
 
 test('a symlink that resolves inside the store is followed, and the link survives', (t) => {
