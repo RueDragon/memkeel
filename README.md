@@ -149,6 +149,13 @@ memkeel doctor
 health, and both writer locks (the store lock and the hook-queue lock) together with holder
 liveness. It exits non-zero when something is genuinely wrong.
 
+A writer lock is never removed automatically, not even when its recorded holder is provably gone.
+`doctor` reports that case as stale so the diagnosis is visible, and a blocked write names the same
+holder and the file to delete, but the decision stays with you: confirm that no writer is running
+and delete the lock file yourself, rather than let a recovering process guess whether the holder it
+cannot see is really finished. Two writers in the ledger is the failure this trades against, and it
+is the worse one.
+
 Then use it from any bound host, or from the shell:
 
 ```bash

@@ -350,6 +350,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A second writer could enter while a live holder owned the writer lock.** Recovering an orphaned
+  lock meant verifying the recorded holder and then renaming the file aside, and those are two
+  steps. One contender could read a dead holder's record while another contender created a fresh,
+  live lock at the same path, so the stale rename moved *that* lock away and a second writer entered
+  while the live holder still believed it held the lock. The unconditional `unlinkSync` in `finally`
+  had the mirror-image flaw, deleting whichever lock sat at the path instead of the one the call had
+  acquired, `processAlive` treated every `process.kill` error other than `EPERM` as proof of death
+  rather than an unanswerable question, and a failure while writing the owner record happened
+  outside the `try` that released it, so a failed acquisition leaked its own lock. Writer locks are
+  no longer removed automatically at all: acquisition fails closed and names the holder, the age and
+  the exact file to delete, `inspectLock` reports the same facts read-only and answers `null` for
+  "cannot be determined" instead of "dead", a holder counts as gone only on `ESRCH`, the owner
+  record is written inside the same `try` that releases it, and release removes the file only when
+  the open handle or the recorded token proves it is still this call's own file. A crash after a
+  write now costs one manual delete; the alternative was two writers in the ledger.
 - **Rewriting a host configuration no longer changes who can read it.** The atomic replace wrote a
   temporary file and renamed it over the target, and rename keeps the *source* file's mode, so a
   config that was `0600` came back with the process default. Host configuration can carry
