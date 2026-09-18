@@ -198,7 +198,18 @@ function writeIfChanged(file, label, transform) {
     // before the lock was taken is part of its input instead of being overwritten by content derived
     // from an older read. The guard above still runs first, so a file this install does not own is
     // refused with the same message it always was.
-    const next = transform(file, old, present);
+    let next;
+    try {
+      next = transform(file, old, present);
+    } catch (error) {
+      // A transform refuses by what it finds in the file - an existing binding that points elsewhere,
+      // ambiguous markers - and those messages have to name the file, or the report says which host was
+      // refused and not which of its files to look at. A dry run against a host that is already bound to
+      // a different home is exactly that case: four refusals with no file named between them.
+      throw typeof error?.message === 'string' && error.message.includes(file)
+        ? error
+        : new Error(`${error?.message ?? error} (${file})`);
+    }
     if (next === null) { skip(label, 'nothing to do'); return; }
     if (next === old) { report.push({ label, file, changed: false }); return; }
     report.push({ label, file, changed: true, mode: dryRun ? 'dry-run' : check ? 'check' : 'write' });

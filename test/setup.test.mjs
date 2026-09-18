@@ -175,7 +175,11 @@ test('custom home survives setup, repeated setup and exact uninstall', (t) => {
 test('refused binding fails and CLI force is forwarded', (t) => {
   const { host, run } = fixture(t);
   fs.writeFileSync(path.join(host, 'config.toml'), '[mcp_servers.agent_memory]\ncommand = "other"\n');
-  assert.equal(run('setup', '--hosts', 'codex').status, 1);
+  const refused = run('setup', '--hosts', 'codex');
+  assert.equal(refused.status, 1);
+  // A refusal raised by the transform has to name the file it refused: the report row otherwise says
+  // only which host failed, and a host owns several files.
+  assert.match(refusal(refused), /config\.toml/, 'the refusal must name the file it refused');
   assert.equal(run('setup', '--hosts', 'codex', '--force').status, 0);
 });
 test('uninstall preserves later user changes', (t) => {
