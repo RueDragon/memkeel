@@ -255,6 +255,50 @@ test('a restrictive mode survives a rewrite', { skip: process.platform === 'win3
   assert.equal(existingMode(file), 0o600);
 });
 
+test('a replacement that fails part-way leaves the original file untouched, not truncated', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-mode-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, 'config.toml');
+  fs.writeFileSync(file, 'model = "demo"\n');
+
+  // A torn write: the bytes go in and the write fails before they are complete, which is the state a
+  // process killed mid-write leaves behind - a direct write truncates the target first, so half of the
+  // new content is what stays on disk. The write is matched by content rather than by path so this
+  // holds whichever file the implementation writes first.
+  const real = fs.writeFileSync;
+  fs.writeFileSync = function (target, content, ...rest) {
+    if (String(content).includes('bound')) {
+      real.call(fs, target, String(content).slice(0, 4));
+      const error = new Error('ENOSPC: no space left on device, write');
+      error.code = 'ENOSPC';
+      throw error;
+    }
+    return real.call(fs, target, ...rest);
+  };
+  t.after(() => { fs.writeFileSync = real; });
+
+  assert.throws(() => writeFilePreservingMode(file, 'model = "demo"\nbound\n'), /ENOSPC/);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'model = "demo"\n', 'a failed replacement must leave the original bytes');
+  assert.deepEqual(fs.readdirSync(root), ['config.toml'], 'and it must not leave a partial file beside it');
+});
+
+test('a symlinked configuration is written through rather than replaced by a regular file', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-mode-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const target = path.join(root, 'dotfiles', 'codex.toml');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, 'model = "demo"\n');
+  const link = path.join(root, 'config.toml');
+  try { fs.symlinkSync(target, link, 'file'); }
+  catch (error) { t.skip(`this platform cannot create a symlink without elevation (${error.code})`); return; }
+
+  writeFilePreservingMode(link, 'model = "demo"\nbound\n');
+  // Replacing the link with a regular file would break a dotfile layout the user set up on purpose, so
+  // the link is written through in place. That is the one case where the atomic replace is not used.
+  assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'the configuration must still be a symlink');
+  assert.equal(fs.readFileSync(target, 'utf8'), 'model = "demo"\nbound\n', 'and its target must hold the new bytes');
+});
+
 test('the root real path is cached, and caching it changes none of the checks', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lu-memory-inside-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

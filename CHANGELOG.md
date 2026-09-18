@@ -350,6 +350,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A host file could be left half-written by a crash.** The host write went straight into the target,
+  and a direct write truncates the file before the replacement bytes exist, so a process killed
+  mid-write left part of a configuration where the user's own file had been. The receipt made that
+  worse rather than better: it holds the pre-install bytes and the intended ones, and a torn file
+  matches neither, so the next run and the uninstall both refused it for a human to resolve. The bytes
+  now go to a sibling temporary that is renamed over the target, which either happens or does not, and
+  a failed write removes its temporary. A symlink is still written through in place, because renaming
+  over it would replace the link with a regular file and break a dotfile layout the user chose.
 - **An interrupted upgrade could be neither retried nor uninstalled.** The receipt recorded the bytes
   a run *intended* to write as the file's installed state before writing them, so a run killed between
   the two writes left a file matching neither the state from before the install nor the state the

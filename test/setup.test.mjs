@@ -59,21 +59,28 @@ const BARRIERS = {
       return real.call(fs, target, flags, ...rest);
     };`,
   // Stops the child immediately before it writes the host file it is installing into, which is the
-  // point a crash would land on: after the restore chain is recorded, before the file is replaced.
+  // point a crash would land on: after the restore chain is recorded, before the file is replaced. The
+  // predicate accepts the target and a temporary beside it, because the replacement is written through
+  // a sibling temporary and renamed - instrumenting one exact path would make the test depend on that
+  // mechanism instead of on the moment the host file is replaced.
   'host-write': `
     const real = fs.writeFileSync;
-    fs.writeFileSync = function (target, ...rest) {
-      if (!fired && String(target) === process.env.MEMKEEL_BARRIER_TARGET) { fire(); }
-      return real.call(fs, target, ...rest);
+    const hostTarget = process.env.MEMKEEL_BARRIER_TARGET;
+    fs.writeFileSync = function (to, ...rest) {
+      const name = String(to);
+      if (!fired && (name === hostTarget || name.startsWith(hostTarget + '.'))) { fire(); }
+      return real.call(fs, to, ...rest);
     };`,
   // Kills the child at that same point, which is what a crash does: no `catch`, no `finally`, no
   // commit. SIGKILL rather than a failed write, because a failed write lets the process clean up
   // after itself and a read-only bit does not stop the write at all when the tests run as root.
   'crash-host-write': `
     const real = fs.writeFileSync;
-    fs.writeFileSync = function (target, ...rest) {
-      if (!fired && String(target) === process.env.MEMKEEL_BARRIER_TARGET) process.kill(process.pid, 'SIGKILL');
-      return real.call(fs, target, ...rest);
+    const hostTarget = process.env.MEMKEEL_BARRIER_TARGET;
+    fs.writeFileSync = function (to, ...rest) {
+      const name = String(to);
+      if (!fired && (name === hostTarget || name.startsWith(hostTarget + '.'))) process.kill(process.pid, 'SIGKILL');
+      return real.call(fs, to, ...rest);
     };`,
   // Kills the child while the receipt is being rewritten *after* the host file already carries the
   // binding: the state an interrupted upgrade leaves, where the file is new and the record is not.
