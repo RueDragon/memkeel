@@ -276,11 +276,25 @@ Every backend implements the same five verbs — `read`, `create`, `append`, `re
 Plain file IO against `vaultRoot`. **Zero external dependencies**, works headless, on any OS,
 inside a container, and on a plain Markdown folder that has never seen Obsidian.
 
-- `create` refuses to overwrite an existing note, then writes and reads the bytes back.
-- `append` is exact-or-rollback: the file is read back, and any mismatch restores the previous bytes.
+- `create` refuses to overwrite an existing note, then publishes the bytes and reads them back.
+- `append` publishes the whole note atomically: read back, and a mismatch is reported rather than
+  repaired, because the bytes are already whole and writing the previous ones back would delete an
+  append that succeeded. An append whose block is already the note's tail is not written twice, so a
+  retry after an interrupted run is safe.
 - `replace` is guarded by an expected value, writes a timestamped backup under
   `backups/replacements/` with before/after hashes, and re-checks that the target did not move
   between preflight and write.
+
+Every write above - and the same writes in `obsidian-cli` mode - is an **atomic publish**: the bytes
+go to a sibling temporary (`<name>.<uuid>.tmp`), are flushed, and are renamed over the target. A
+process killed at any point leaves the previous note intact instead of a half-written one, and a
+retry is safe. What that does *not* claim: the temporary's own bytes are flushed with `fsync` before
+the rename, but the directory entry is not, and Windows offers no way to flush one, so a power cut
+can lose the newest write - it cannot make a file partial. Residue from a kill is never deleted
+automatically, because a later run cannot prove it owns that file; it is named `.tmp`, which the note
+scanner never reads, so it can never become an event. A symlink at the target is resolved and the
+bytes are published at what it points to, so the link survives and the write stays atomic; a broken
+link, a link to a directory, and a link that resolves outside the store are refused instead.
 
 ### `obsidian-cli` (optional)
 
@@ -643,9 +657,9 @@ back. It is **never** passed through a CLI argument list. The Obsidian CLI decod
 two-character sequences `\n` and `\t` inside every argument and offers no way to escape a
 literal backslash before those letters, so a Windows path such as `C:\temp\new\file.md` would
 arrive as `C:<TAB>emp<LF>ew\file.md` and corrupt the journal. Reads are byte-faithful, so the
-CLI stays the verification channel while the filesystem stays the write channel. Appends are
-exact-or-rollback for the same reason: one corrupt append would otherwise break `loadEvents`
-for the whole store.
+CLI stays the verification channel while the filesystem stays the write channel. Every write is
+published atomically for the same reason: a direct write truncates the target first, so one corrupt
+or interrupted append would otherwise break `loadEvents` for the whole store.
 
 ## The shared policy block
 

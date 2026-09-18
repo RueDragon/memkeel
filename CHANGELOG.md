@@ -350,6 +350,36 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A crash while writing a note destroyed the events already committed to it.** Storage wrote the
+  target in place: the file was truncated first, and the new bytes were copied into it, so a process
+  killed inside that window left the note half-written. For a journal note that is not a lost append
+  but a lost history - the events already committed to that note were gone with the bytes the append
+  was replacing. Every write now publishes through a sibling temporary that is flushed and renamed
+  over the target, so a reader sees the old note or the new one and never a mixture. The boundaries
+  are covered by tests that kill real child processes with `SIGKILL` at three points - in the middle
+  of the temporary, immediately before the rename, and immediately after it, before the readback -
+  and assert that the committed note is byte-identical, that a retry neither loses the old events nor
+  appends the same one twice, and that a failed (not killed) publish reports the failure and removes
+  its own temporary. The residue a kill leaves behind is never deleted for the caller, because a
+  later run cannot prove it owns that file; it is named `<name>.<uuid>.tmp`, which the note scanner
+  never reads, so it cannot become an event or make the journal look incomplete. The durability
+  boundary is stated where the write happens rather than implied: the temporary's bytes are flushed
+  with `fsync` before the rename, the directory entry is not, and Windows cannot flush one at all, so
+  a power cut can lose the newest write - it cannot make a note partial. `rename` is not `fsync`, and
+  the code does not describe it as one.
+- **A stale readback deleted a complete note.** When a readback disagreed with the bytes just written,
+  `create` removed the note and `append` wrote the previous bytes back. Both assumed the process
+  survives to run the repair: a killed process runs no `catch` at all, and a rollback would also
+  overwrite whatever a second writer had put there in the meantime. A published write has no partial
+  state to roll back from, so a mismatch that survives the retries is now reported instead of
+  "repaired" - the bytes on disk are complete and they stay. An append whose block is already the
+  note's tail is recognised as the retry it is and is not written a second time.
+- **A symlink at a target was written through in place, which is the truncating write this release
+  removes everywhere else.** The link itself must survive - replacing it with a regular file would
+  break a dotfile layout the user chose - but writing through it opened the same window as an
+  in-place write. The link is now resolved and the bytes are published at what it points to, so the
+  link survives and the write is still all-or-nothing. A broken link, a link to a directory, and a
+  link that resolves outside the store are refused rather than followed, and each refusal is tested.
 - **Rebinding or upgrading dsh duplicated its hook block and kept the old memory home.** A second
   `setup` for that host rewrote the profile file's MCP item up to the next top-level YAML entry - and the
   managed hook block's own entry is one of those, sitting right after the marker comment that opens the
@@ -380,8 +410,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   worse rather than better: it holds the pre-install bytes and the intended ones, and a torn file
   matches neither, so the next run and the uninstall both refused it for a human to resolve. The bytes
   now go to a sibling temporary that is renamed over the target, which either happens or does not, and
-  a failed write removes its temporary. A symlink is still written through in place, because renaming
-  over it would replace the link with a regular file and break a dotfile layout the user chose.
+  a failed write removes its temporary. A symlink is resolved first and the replacement is published at
+  what it points to, so a dotfile layout the user chose survives without the write going through the
+  link in place - see the symlink entry above.
 - **An interrupted upgrade could be neither retried nor uninstalled.** The receipt recorded the bytes
   a run *intended* to write as the file's installed state before writing them, so a run killed between
   the two writes left a file matching neither the state from before the install nor the state the

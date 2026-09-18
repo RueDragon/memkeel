@@ -63,24 +63,23 @@ const BARRIERS = {
   // predicate accepts the target and a temporary beside it, because the replacement is written through
   // a sibling temporary and renamed - instrumenting one exact path would make the test depend on that
   // mechanism instead of on the moment the host file is replaced.
-  'host-write': `
-    const real = fs.writeFileSync;
-    const hostTarget = process.env.MEMKEEL_BARRIER_TARGET;
-    fs.writeFileSync = function (to, ...rest) {
-      const name = String(to);
-      if (!fired && (name === hostTarget || name.startsWith(hostTarget + '.'))) { fire(); }
-      return real.call(fs, to, ...rest);
-    };`,
-  // Kills the child at that same point, which is what a crash does: no `catch`, no `finally`, no
-  // commit. SIGKILL rather than a failed write, because a failed write lets the process clean up
-  // after itself and a read-only bit does not stop the write at all when the tests run as root.
+  // Kills the child at the moment the host file's replacement is about to become visible: the new bytes
+  // are written to a sibling temporary and flushed, and this fires immediately before the rename that
+  // publishes them. That is the point an interruption lands on - after the restore chain is recorded,
+  // before the host file is replaced - and it is what a crash does: SIGKILL, so no `catch` and no
+  // `finally` in the child can tidy up, unlike a failed write, which lets the process clean up after
+  // itself. A read-only bit does not stop the write at all when the tests run as root.
+  //
+  // Instrumenting the write would no longer work: the bytes reach the temporary through a file
+  // descriptor, so the hooked call sees an integer rather than a path, and the rename is the only step
+  // that names the target. A crash here therefore leaves the temporary behind, which is deliberate -
+  // the assertions below have to hold with residue in the host directory.
   'crash-host-write': `
-    const real = fs.writeFileSync;
+    const real = fs.renameSync;
     const hostTarget = process.env.MEMKEEL_BARRIER_TARGET;
-    fs.writeFileSync = function (to, ...rest) {
-      const name = String(to);
-      if (!fired && (name === hostTarget || name.startsWith(hostTarget + '.'))) process.kill(process.pid, 'SIGKILL');
-      return real.call(fs, to, ...rest);
+    fs.renameSync = function (from, to, ...rest) {
+      if (!fired && String(to) === hostTarget) process.kill(process.pid, 'SIGKILL');
+      return real.call(fs, from, to, ...rest);
     };`,
   // Kills the child while the receipt is being rewritten *after* the host file already carries the
   // binding: the state an interrupted upgrade leaves, where the file is new and the record is not.

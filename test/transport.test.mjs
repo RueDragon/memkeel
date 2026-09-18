@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { VaultTransport, inside, atomicJson, existingMode, writeFilePreservingMode } from '../lib/transport.mjs';
+import { VaultTransport, inside, atomicJson, existingMode, publishStoreFile, writeFilePreservingMode } from '../lib/transport.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lu-memory-transport-'));
@@ -186,22 +186,42 @@ test('event content with backslash-t and backslash-n paths round-trips byte-exac
   assert.equal(after.includes(String.fromCharCode(9)), false, 'no tab may appear where a backslash-t was written');
 });
 
-test('a persistent readback mismatch rolls an append back instead of leaving corrupt bytes', (t) => {
+test('a persistent readback mismatch reports the mismatch instead of destroying the appended bytes', (t) => {
   const { config, transport } = fixture(t);
   const file = path.join(config.vaultRoot, 'note.md');
   fs.writeFileSync(file, 'original');
-  // Only the post-write readback goes stale, so the write really happens and the rollback
-  // is what must restore the file (a pre-write failure would prove nothing).
+  // Only the post-write readback goes stale, so the write really happens: the file on disk holds the
+  // complete append, and a mismatch is a report about the vault view rather than about those bytes.
   transport.read = (relative) => (fs.readFileSync(path.join(config.vaultRoot, relative), 'utf8').includes('new line') ? 'stale vault view' : 'original');
   assert.throws(() => transport.append('note.md', 'new line'), /readback mismatch/i);
-  assert.equal(fs.readFileSync(file, 'utf8'), 'original', 'the append must be rolled back');
+  // The append was published all at once, so there is no partial state to roll back from. Writing the
+  // previous bytes back would delete an append that succeeded, and would overwrite anything a second
+  // writer had put there - which is what the readback check exists to protect.
+  assert.equal(fs.readFileSync(file, 'utf8'), 'original\n\nnew line', 'the published bytes must survive a stale vault view');
 });
 
-test('a failed create removes the partial note instead of leaving it behind', (t) => {
+test('a persistent readback mismatch reports the mismatch instead of removing the created note', (t) => {
   const { config, transport } = fixture(t);
   transport.read = () => 'stale vault view';
   assert.throws(() => transport.create('partial.md', '# New'), /readback mismatch/i);
-  assert.equal(fs.existsSync(path.join(config.vaultRoot, 'partial.md')), false);
+  // The note is complete on disk. Deleting it because a *view* of it lagged would destroy the bytes
+  // the check exists to protect, and would do so on the strength of a cache, not of the file.
+  assert.equal(fs.readFileSync(path.join(config.vaultRoot, 'partial.md'), 'utf8'), '# New', 'the created note must survive a stale vault view');
+});
+
+test('an append whose block is already the note tail is not appended a second time', (t) => {
+  const { config, transport } = fixture(t);
+  const file = path.join(config.vaultRoot, 'note.md');
+  fs.writeFileSync(file, 'original');
+  transport.append('note.md', 'new line');
+  const once = fs.readFileSync(file, 'utf8');
+  // The retry of an append that was published but never acknowledged - the process died between the
+  // rename and the readback - must recognise its own trailing block instead of writing it twice.
+  transport.append('note.md', 'new line');
+  assert.equal(fs.readFileSync(file, 'utf8'), once, 'the same block must not be appended twice');
+  // Only the exact trailing block is recognised, so ordinary appends are unaffected.
+  transport.append('note.md', 'other line');
+  assert.equal(fs.readFileSync(file, 'utf8'), `${once}\n\nother line`, 'a different block must still be appended');
 });
 
 // --------------------------------------------------------------- permissions (DEP-02)
@@ -282,7 +302,7 @@ test('a replacement that fails part-way leaves the original file untouched, not 
   assert.deepEqual(fs.readdirSync(root), ['config.toml'], 'and it must not leave a partial file beside it');
 });
 
-test('a symlinked configuration is written through rather than replaced by a regular file', (t) => {
+test('a symlinked configuration keeps the link and publishes atomically at its target', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-mode-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const target = path.join(root, 'dotfiles', 'codex.toml');
@@ -293,10 +313,88 @@ test('a symlinked configuration is written through rather than replaced by a reg
   catch (error) { t.skip(`this platform cannot create a symlink without elevation (${error.code})`); return; }
 
   writeFilePreservingMode(link, 'model = "demo"\nbound\n');
-  // Replacing the link with a regular file would break a dotfile layout the user set up on purpose, so
-  // the link is written through in place. That is the one case where the atomic replace is not used.
+  // Replacing the link with a regular file would break a dotfile layout the user set up on purpose, and
+  // writing through the link in place is the truncating write this module exists to remove. The link is
+  // resolved instead and the replacement published at its target, so both properties hold at once.
   assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'the configuration must still be a symlink');
   assert.equal(fs.readFileSync(target, 'utf8'), 'model = "demo"\nbound\n', 'and its target must hold the new bytes');
+  assert.deepEqual(fs.readdirSync(path.dirname(target)), ['codex.toml'], 'the publish must leave no temporary behind');
+});
+
+// --------------------------------------------------------------- symlinks inside a store
+
+test('a file symlink that leaves the store is refused, and neither the link nor its target is touched', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-link-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = path.join(root, 'store');
+  const outside = path.join(root, 'shared');
+  fs.mkdirSync(store); fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, 'note.md'), 'original\n');
+  try { fs.symlinkSync(path.join(outside, 'note.md'), path.join(store, 'note.md'), 'file'); }
+  catch (error) { t.skip(`this platform cannot create a symlink without elevation (${error.code})`); return; }
+
+  // `inside` checks the path before the final component is followed, so a link at the target itself is
+  // the one escape it cannot see on its own. Writing through such a link in place would truncate a file
+  // the user keeps outside the store; replacing it would turn the link into a regular file.
+  assert.throws(() => publishStoreFile(store, 'note.md', 'updated\n'), /outside the store through a symlink/);
+  assert.equal(fs.readFileSync(path.join(outside, 'note.md'), 'utf8'), 'original\n', 'a refused publish must not touch the target');
+  assert.equal(fs.lstatSync(path.join(store, 'note.md')).isSymbolicLink(), true, 'and must not replace the link');
+});
+
+test('a symlink that resolves inside the store is followed, and the link survives', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-link-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = path.join(root, 'store');
+  fs.mkdirSync(path.join(store, 'notes'), { recursive: true });
+  fs.writeFileSync(path.join(store, 'notes', 'real.md'), 'original\n');
+  try { fs.symlinkSync(path.join(store, 'notes', 'real.md'), path.join(store, 'alias.md'), 'file'); }
+  catch (error) { t.skip(`this platform cannot create a symlink without elevation (${error.code})`); return; }
+
+  publishStoreFile(store, 'alias.md', 'updated\n');
+  assert.equal(fs.readFileSync(path.join(store, 'notes', 'real.md'), 'utf8'), 'updated\n');
+  assert.equal(fs.lstatSync(path.join(store, 'alias.md')).isSymbolicLink(), true, 'the link must survive the publish');
+  assert.deepEqual(fs.readdirSync(path.join(store, 'notes')), ['real.md'], 'and the publish must leave no temporary behind');
+});
+
+test('a broken link and a link to a directory are refused instead of being replaced', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-link-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = path.join(root, 'store');
+  fs.mkdirSync(path.join(store, 'dir'), { recursive: true });
+  const broken = path.join(store, 'broken.md');
+  const toDir = path.join(store, 'todir.md');
+  // Directory links rather than file links, because they are the one kind Windows can create without
+  // elevation - so these two refusals are checked on every platform rather than only in CI.
+  const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+  try {
+    fs.symlinkSync(path.join(store, 'missing-dir'), broken, linkType);
+    fs.symlinkSync(path.join(store, 'dir'), toDir, linkType);
+  } catch (error) { t.skip(`this platform cannot create a directory link (${error.code})`); return; }
+
+  // There is nothing safe to publish to in either case: a broken link has no target to hold the bytes,
+  // and a link to a directory has no file to replace. Both are refused rather than resolved into
+  // something the user did not ask for.
+  assert.throws(() => publishStoreFile(store, 'broken.md', 'x\n'), /cannot be resolved/);
+  assert.throws(() => publishStoreFile(store, 'todir.md', 'x\n'), /over a directory/);
+  assert.equal(fs.lstatSync(broken).isSymbolicLink(), true, 'the broken link must be left alone');
+  assert.equal(fs.lstatSync(toDir).isSymbolicLink(), true, 'and so must the link to a directory');
+});
+
+test('a directory link that leaves the store is refused before anything is written', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-link-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = path.join(root, 'store');
+  const outside = path.join(root, 'outside');
+  fs.mkdirSync(store); fs.mkdirSync(outside);
+  // A directory link rather than a file link: `inside` resolves the nearest existing ancestor, so this
+  // is the shape that catches an escape before the final component is even considered. Directory links
+  // are also the one kind Windows can create without elevation, so this check runs on every platform.
+  const linked = path.join(store, 'linked');
+  try { fs.symlinkSync(outside, linked, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { t.skip(`this platform cannot create a directory link (${error.code})`); return; }
+
+  assert.throws(() => publishStoreFile(store, 'linked/note.md', 'x\n'), /escapes root/);
+  assert.deepEqual(fs.readdirSync(outside), [], 'nothing may be written outside the store');
 });
 
 test('the root real path is cached, and caching it changes none of the checks', (t) => {
