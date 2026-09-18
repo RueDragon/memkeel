@@ -350,6 +350,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`setup` rewrote host files outside its lock, and recorded the restore chain after the write.**
+  Both halves lose the user's own configuration. The host-file read-modify-write sat outside the
+  setup lock, which wrapped only the receipt update, so a `setup` racing another `setup` - or an
+  `--uninstall` - could read, decide and write in either order; a restore could then drop the row a
+  competing install was recording at that moment, leaving a file installed with nothing recording how
+  to restore it. And the receipt row was written *after* the host file, so an interruption between
+  the two left memkeel's content in a host file with the pre-install bytes recorded nowhere; the next
+  run found the file already matching and skipped it, discarding the only way back. The lock now
+  covers the read, the decision, the file write and the row, and the row is written first, so an
+  interruption leaves the original bytes on disk and a later run still knows how to undo the install.
+  The old order was justified by a guard that accepted only the installed state; that guard has since
+  accepted both states this install owns, which is what makes the new order safe. A dry run and
+  `--check` still create no lock file, because they promise not to write.
 - **One unusable row in the installation receipt made the whole restore chain look healthy.**
   `readInstallReceipt` dropped any `files` row it could not restore from - one without a string
   `after`, or without a `before` that is a string or null - and still reported `malformed: null`, so

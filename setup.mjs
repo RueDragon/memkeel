@@ -78,58 +78,81 @@ const receipt = previousReceipt.exists ? { ...previousReceipt, files: { ...previ
 // applications' files, not the store, and a running checkpoint drain must not block it.
 const receiptLockRoot = path.join(memoryHome, 'state', 'setup-lock');
 
+/** Write a receipt draft, and keep the in-memory view in step with what is on disk. */
+function persistReceipt(draft) {
+  atomicJson(receiptFile, draft);
+  for (const key of Object.keys(receipt)) delete receipt[key];
+  Object.assign(receipt, draft);
+}
+
 /**
- * Read-modify-write the receipt under a lock.
+ * Read the receipt while the setup lock is held, so the decision that follows is made against what is
+ * actually on disk.
  *
  * Two concurrent `setup` runs would otherwise each write their whole in-memory copy, and the loser's
  * entries - together with the `before` bytes of files it changed - would be lost. Re-reading inside
  * the lock is what makes the update additive rather than last-writer-wins.
  */
-function updateReceipt(build) {
-  withLock(receiptLockRoot, () => {
-    const current = readInstallReceipt(memoryHome);
-    if (current.malformed) throw new Error(`The installation receipt became unreadable during this run (${current.file}): ${current.malformed}`);
-    const draft = build(current);
-    atomicJson(receiptFile, draft);
-    // Keep the in-memory view in step with the disk, so the uninstall path reads what is recorded.
-    for (const key of Object.keys(receipt)) delete receipt[key];
-    Object.assign(receipt, draft);
-  });
+function readReceiptLocked() {
+  const current = readInstallReceipt(memoryHome);
+  if (current.malformed) throw new Error(`The installation receipt became unreadable during this run (${current.file}): ${current.malformed}`);
+  return current;
 }
 
 const receiptMeta = () => ({ format: RECEIPT_FORMAT, version: packageVersion, memoryHome, scope: selected });
 
+/**
+ * Read-modify-write one host file and its receipt row, under the setup lock.
+ *
+ * The lock has to cover the read and the decision, not just the receipt write. Two runs of `setup` -
+ * or a `setup` racing an `--uninstall` - would otherwise judge the same file from the same stale
+ * bytes and then write in either order, which can leave a host file and the receipt disagreeing
+ * about what is installed. A competing run now waits, re-reads what the winner actually did, and
+ * either finds nothing left to change or refuses a state this install does not own.
+ */
 function writeIfChanged(file, next, label) {
-  const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-  if (old === next) { report.push({ label, file, changed: false }); return; }
-  const row = receipt.files[file];
-  // Only an UNKNOWN state is refused. `before` and `after` are both states this install is
-  // responsible for, so a file still sitting in its pre-install state is safe to write - and that
-  // is what makes an interrupted install recoverable by running setup again. Anything else is
-  // someone else's edit and has to be reviewed by hand. This is the same rule the uninstall
-  // preflight already applies, so the two paths now agree.
-  if (row && old !== row.after && old !== row.before) throw new Error('Configuration changed since setup; review and restore manually before rebinding: ' + file);
-  report.push({ label, file, changed: true, mode: dryRun ? 'dry-run' : check ? 'check' : 'write' });
-  if (dryRun || check) return;
-  wrote = true;
-  fs.mkdirSync(backupDir, { recursive: true });
-  // The file path is part of the backup name: several files share one label (each dsh
-  // profile writes `dsh-hooks-*`), and a colliding name silently reduced the backup to
-  // whichever file happened to be written last.
-  if (old) writeFilePreservingMode(path.join(backupDir, `${label}-${sha(file).slice(0, 8)}${path.extname(file) || '.txt'}`), old, { modeFrom: file });
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') !== old) throw new Error(`Concurrent edit detected: ${file}`);
-  const before = fs.existsSync(file) ? old : null;
-  // Replacing a host configuration must keep its permissions: these files can carry credentials,
-  // and a rewrite that widened the mode would expose them.
-  writeFilePreservingMode(file, next);
-  if (fs.readFileSync(file, 'utf8') !== next) throw new Error(`Readback mismatch: ${file}`);
-  // The receipt is recorded after the file, never before. A receipt that claims an installed state
-  // the filesystem does not have would make every later run refuse that file, so a crash between
-  // the two writes must leave the receipt behind rather than ahead of reality.
-  if (!uninstall) {
-    updateReceipt((current) => mergeReceiptEntry(current, file, { label, before, after: next }, receiptMeta()));
-  }
+  // A dry run and a check both promise not to write, so they must not create the lock directory
+  // either; the decision they report is made from the receipt the run already read.
+  const write = !dryRun && !check;
+  const apply = (current) => {
+    const present = fs.existsSync(file);
+    const old = present ? fs.readFileSync(file, 'utf8') : '';
+    if (old === next) { report.push({ label, file, changed: false }); return; }
+    const row = current.files[file];
+    // Only an UNKNOWN state is refused. `before` and `after` are both states this install is
+    // responsible for, so a file still sitting in its pre-install state is safe to write - and that
+    // is what makes an interrupted install recoverable by running setup again. Anything else is
+    // someone else's edit and has to be reviewed by hand. This is the same rule the uninstall
+    // preflight already applies, so the two paths now agree. A recorded `before` of null means the
+    // file did not exist, which is why absence has to be compared as absence and not as ''.
+    const matchesBefore = row?.before === null ? !present : old === row?.before;
+    if (row && old !== row.after && !matchesBefore) throw new Error('Configuration changed since setup; review and restore manually before rebinding: ' + file);
+    report.push({ label, file, changed: true, mode: dryRun ? 'dry-run' : check ? 'check' : 'write' });
+    if (!write) return;
+    wrote = true;
+    fs.mkdirSync(backupDir, { recursive: true });
+    // The file path is part of the backup name: several files share one label (each dsh
+    // profile writes `dsh-hooks-*`), and a colliding name silently reduced the backup to
+    // whichever file happened to be written last.
+    if (old) writeFilePreservingMode(path.join(backupDir, `${label}-${sha(file).slice(0, 8)}${path.extname(file) || '.txt'}`), old, { modeFrom: file });
+    // The restore chain is recorded BEFORE the file it describes, and that order is the point. A
+    // crash between the two writes now leaves the pre-install bytes on disk, so a later run still
+    // knows how to undo the install. The opposite order - which is what this used to do - loses them
+    // for good, because the file is already written and the next run finds it matching and skips it.
+    // That order existed because the guard once accepted only the installed state, so a receipt ahead
+    // of the file would have made every later run refuse it; the guard owns both states now.
+    persistReceipt(mergeReceiptEntry(current, file, { label, before: present ? old : null, after: next }, receiptMeta()));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') !== old) throw new Error(`Concurrent edit detected: ${file}`);
+    // Replacing a host configuration must keep its permissions: these files can carry credentials,
+    // and a rewrite that widened the mode would expose them.
+    writeFilePreservingMode(file, next);
+    if (fs.readFileSync(file, 'utf8') !== next) throw new Error(`Readback mismatch: ${file}`);
+  };
+  // The lock is taken only when this run may write. A check that created a lock file would not be
+  // the read-only operation it is documented to be.
+  if (write) withLock(receiptLockRoot, () => apply(readReceiptLocked()));
+  else apply(receipt);
 }
 function skip(label, reason) { report.push({ label, skipped: true, reason }); }
 
@@ -328,24 +351,35 @@ for (const id of selected) {
   // must not abort the remaining hosts; it is reported instead.
   try {
     if (uninstall) {
-      const owned = Object.entries(receipt.files).filter(([, row]) => row.label.startsWith(`${id}-`));
-      if (!owned.length) throw new Error('No installation receipt; restore legacy backups manually to avoid deleting unowned configuration');
-      // Preflight every file before restoring any of this host's configuration.
-      for (const [file, row] of owned) {
-        const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
-        if (current !== row.after && current !== row.before) throw new Error(`Configuration changed since setup; preserve it and restore manually: ${file}`);
-      }
-      for (const [file, row] of owned) {
-        report.push({ label: row.label, file, changed: true, mode: dryRun ? 'dry-run' : check ? 'check' : 'restore' });
-        if (dryRun || check) continue;
-        if (row.before === null) fs.rmSync(file, { force: true });
-        else {
-          // Restoring must also keep the permissions the file had before the install.
-          writeFilePreservingMode(file, row.before);
-          if (fs.readFileSync(file, 'utf8') !== row.before) throw new Error(`Restore readback mismatch: ${file}`);
+      // The preflight and the restores belong to one critical section. A competing install that wrote
+      // between them would otherwise be judged against bytes that are already stale, and the row it
+      // recorded in that window could be dropped by a restore that never saw it - leaving the file
+      // installed with nothing recording how to restore it.
+      const write = !dryRun && !check;
+      const restore = (current) => {
+        const owned = Object.entries(current.files).filter(([, row]) => row.label.startsWith(`${id}-`));
+        if (!owned.length) throw new Error('No installation receipt; restore legacy backups manually to avoid deleting unowned configuration');
+        // Preflight every file before restoring any of this host's configuration.
+        for (const [file, row] of owned) {
+          const onDisk = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+          if (onDisk !== row.after && onDisk !== row.before) throw new Error(`Configuration changed since setup; preserve it and restore manually: ${file}`);
         }
-        updateReceipt((current) => dropReceiptEntry(current, file, receiptMeta()));
-      }
+        let draft = current;
+        for (const [file, row] of owned) {
+          report.push({ label: row.label, file, changed: true, mode: dryRun ? 'dry-run' : check ? 'check' : 'restore' });
+          if (!write) continue;
+          if (row.before === null) fs.rmSync(file, { force: true });
+          else {
+            // Restoring must also keep the permissions the file had before the install.
+            writeFilePreservingMode(file, row.before);
+            if (fs.readFileSync(file, 'utf8') !== row.before) throw new Error(`Restore readback mismatch: ${file}`);
+          }
+          draft = dropReceiptEntry(draft, file, receiptMeta());
+          persistReceipt(draft);
+        }
+      };
+      if (write) withLock(receiptLockRoot, () => restore(readReceiptLocked()));
+      else restore(receipt);
       continue;
     }
     for (const { file, next } of host.mcp(dir)) {

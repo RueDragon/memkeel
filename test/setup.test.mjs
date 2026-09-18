@@ -5,7 +5,25 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { withLock } from '../lib/transport.mjs';
 const cli = fileURLToPath(new URL('../memory.mjs', import.meta.url));
+// A synchronous sleep, so a test can hold the setup lock while a spawned run is given time to reach
+// it. Atomics.wait blocks this process only; the child is a separate process and keeps running.
+function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+/** Start a run without waiting for it, so the caller can watch what it does while it is blocked. */
+function spawnRun(args, env, home) {
+  const state = { code: null, stderr: '' };
+  const child = spawn(process.execPath, [cli, ...args, '--home', home], { env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+  child.stderr.on('data', (chunk) => { state.stderr += chunk; });
+  child.on('close', (code) => { state.code = code; });
+  return state;
+}
+async function settled(state, ms = 30000) {
+  const deadline = Date.now() + ms;
+  while (state.code === null && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.notEqual(state.code, null, 'the spawned run did not finish');
+  return state.code;
+}
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-setup-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -15,7 +33,7 @@ function fixture(t) {
   const env = { ...process.env, MEMKEEL_HOME: path.join(root, 'wrong-home'), CODEX_HOME: host };
   const run = (...args) => spawnSync(process.execPath, [cli, ...args, '--home', home], { env, encoding: 'utf8', windowsHide: true });
   assert.equal(run('init').status, 0);
-  return { root, home, host, run };
+  return { root, home, host, env, run };
 }
 test('custom home survives setup, repeated setup and exact uninstall', (t) => {
   const { home, host, run } = fixture(t);
@@ -386,4 +404,76 @@ test('two concurrent setups both keep their receipt entries', async (t) => {
   const files = Object.keys(receiptOf(home).files);
   assert.ok(files.some((file) => file.includes('codex')), `no codex entry in ${JSON.stringify(files)}`);
   assert.ok(files.some((file) => file.includes('zcode')), `no zcode entry in ${JSON.stringify(files)}`);
+});
+
+test('a host file that cannot be written still leaves its restore chain recorded', (t) => {
+  const { host, home, run } = fixture(t);
+  const config = path.join(host, 'config.toml');
+  const original = 'model = "demo"\n';
+  fs.writeFileSync(config, original);
+  // The write fails at exactly the point an interruption would land: after the restore chain is
+  // recorded and before the host file is replaced. With the other order the host file was written
+  // first, so a failure here left our content in it with no `before` bytes recorded anywhere - and a
+  // re-run then skipped the file because it already matched, dropping the only way to restore the
+  // user's own configuration. Nothing about that loss was visible.
+  fs.chmodSync(config, 0o444);
+  try {
+    const result = run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy');
+    assert.notEqual(result.status, 0, 'a host file that cannot be written must fail the run');
+    assert.equal(fs.readFileSync(config, 'utf8'), original, 'the host file must be left as it was');
+
+    const receiptFile = path.join(home, 'state', 'setup-receipt.json');
+    assert.equal(fs.existsSync(receiptFile), true, 'the restore chain must be recorded before the file it describes');
+    const row = JSON.parse(fs.readFileSync(receiptFile, 'utf8')).files[config];
+    assert.ok(row, 'a failure between the two writes must not lose the restore chain');
+    assert.equal(row.before, original);
+    assert.match(row.after, /mcp_servers\.agent_memory/);
+  } finally {
+    // The failure above is a read-only bit; clearing it is what lets the fixture clean up.
+    fs.chmodSync(config, 0o644);
+  }
+});
+
+test('a setup waits for the setup lock instead of writing a host file under a live holder', async (t) => {
+  const { host, home, env } = fixture(t);
+  const config = path.join(host, 'config.toml');
+  const original = 'model = "demo"\n';
+  fs.writeFileSync(config, original);
+  const state = spawnRun(['setup', '--hosts', 'codex'], env, home);
+
+  // Hold the lock the setup path itself has to take before it may rewrite a host file. A run that
+  // writes anyway is the interleaving that lets a competing run judge a file it does not own yet:
+  // two runs could each read the receipt and the host file, write, and record, in either order.
+  withLock(path.join(home, 'state', 'setup-lock'), () => {
+    sleepSync(1200);
+    assert.equal(fs.readFileSync(config, 'utf8'), original, 'a host file must not be written while another holder has the setup lock');
+    assert.equal(state.code, null, 'the second run must be waiting for the lock, not already finished');
+  });
+
+  assert.equal(await settled(state), 0, state.stderr);
+  assert.match(fs.readFileSync(config, 'utf8'), /mcp_servers\.agent_memory/);
+  assert.ok(receiptOf(home).files[config], 'and it must record the restore chain once it can run');
+});
+
+test('an uninstall waits for the setup lock instead of restoring a host file under a live holder', async (t) => {
+  const { host, home, env, run } = fixture(t);
+  const config = path.join(host, 'config.toml');
+  const original = 'model = "demo"\n';
+  fs.writeFileSync(config, original);
+  assert.equal(run('setup', '--hosts', 'codex', '--no-hooks', '--no-policy').status, 0);
+  const installed = fs.readFileSync(config, 'utf8');
+
+  const state = spawnRun(['setup', '--hosts', 'codex', '--no-hooks', '--no-policy', '--uninstall'], env, home);
+
+  // The same rule on the way back out. A restore that runs under someone else's lock can drop the
+  // receipt entry for a file a competing install is recording at that moment, which leaves the file
+  // installed with nothing recording how to restore it.
+  withLock(path.join(home, 'state', 'setup-lock'), () => {
+    sleepSync(1200);
+    assert.equal(fs.readFileSync(config, 'utf8'), installed, 'a host file must not be restored while another holder has the setup lock');
+    assert.equal(state.code, null, 'the uninstall must be waiting for the lock, not already finished');
+  });
+
+  assert.equal(await settled(state), 0, state.stderr);
+  assert.equal(fs.readFileSync(config, 'utf8'), original, 'the uninstall must restore the pre-install bytes once it holds the lock');
 });
