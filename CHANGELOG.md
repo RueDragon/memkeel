@@ -9,6 +9,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A runtime directory can be rebuilt from the artifact instead of copied by hand.** A host runs
+  the package from a directory of its own, so an edit to the checkout changes nothing until that
+  copy is rebuilt — and the drift is silent from both sides: the checkout is clean, the copy is
+  complete, and the only symptom is a hook that behaves like last week's code. `npm run sync-app --
+  --into DIR` rebuilds the copy from the real tarball, verifies every file by reading it back,
+  keeps the previous copy as a rollback directory, and refuses a target that is not already a
+  memkeel copy unless `--force` says otherwise. `--check` reports drift and names the files that
+  differ without writing anything, so "is the host running the code I just wrote?" has an answer
+  before the code is blamed.
+
 - **The collection policy panel renders library prose in the reader's language.** `privacy.mjs` emitted
   the deletion vocabulary, the reason behind a collection decision and the `permanentDeletion`
   explanation as Chinese sentences, so the settings page showed Chinese in English and the CLI showed

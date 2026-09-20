@@ -100,6 +100,29 @@ without being declared fails the gate.
 When you add something that must ship, add its path to `files` in the same pull request. When you
 add a build output, confirm the resulting file list is what you intended.
 
+## Syncing a runtime directory
+
+An agent host runs the package from a directory of its own, not from your checkout: the hooks and
+the MCP server are pointed at a copy of the published artifact. Editing the checkout therefore does
+nothing until that copy is rebuilt, and the drift is silent — the checkout is clean, the runtime
+directory is complete, and the only symptom is a hook that behaves like last week's code.
+
+`npm run sync-app` rebuilds that copy from the real tarball, verifies every file by reading it back,
+and keeps the previous copy as a rollback directory beside the target:
+
+```bash
+npm run sync-app -- --into C:/Users/<you>/memkeel-app            # rebuild the runtime directory
+npm run sync-app -- --into C:/Users/<you>/memkeel-app --check    # report drift; writes nothing
+```
+
+`--check` exits non-zero on drift and names the files that differ, the same way
+`node scripts/build-vendor.mjs --check` reports an out-of-sync vendored module. It is the quick way
+to answer "is the host running the code I just wrote?" before blaming the code.
+
+The target is never the checkout itself, and a directory that is not already a memkeel copy is
+refused unless you pass `--force`, so a mistyped path cannot overwrite something else. Syncing from
+a tarball you already have, rather than from the working tree, is `--from path/to/memkeel-1.0.0.tgz`.
+
 ## Rebuilding the dashboard bundle
 
 `dashboard/static/` is **committed on purpose** so the console runs with no build step after a
