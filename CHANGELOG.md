@@ -360,6 +360,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The transcript view failed as soon as it listed a session.** Converting the view to the message
+  catalogue gave its "how long ago" helper a translator argument, and both call sites that render an
+  age kept passing the timestamp alone, so the first row of the session list threw `t is not a
+  function` while the view rendered - the same throw the browser console reported for the header of
+  the open session. A third site carried the mistake in another shape: the map over a session's real
+  transcript named its turn `t`, which shadowed the translator that the user bubble beside it then
+  called, so the real-transcript tab failed as soon as a transcript held a user turn. The age call
+  sites pass the translator, the turn has a name of its own, and the committed bundle is rebuilt.
 - **Rebinding a host that already ran a previous install left it with two sets of hooks.** A hook entry
   was recognised as this system's only when its command named *this* install's `hook-runner.mjs`, so the
   entries left by an earlier install - the ones a move of the memory home or the program is supposed to
