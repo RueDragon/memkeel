@@ -9,6 +9,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A runtime directory can be rebuilt from the artifact instead of copied by hand.** A host runs
+  the package from a directory of its own, so an edit to the checkout changes nothing until that
+  copy is rebuilt — and the drift is silent from both sides: the checkout is clean, the copy is
+  complete, and the only symptom is a hook that behaves like last week's code. `npm run sync-app --
+  --into DIR` rebuilds the copy from the real tarball, verifies every file by reading it back,
+  keeps the previous copy as a rollback directory, and refuses a target that is not already a
+  memkeel copy unless `--force` says otherwise. `--check` reports drift and names the files that
+  differ without writing anything, so "is the host running the code I just wrote?" has an answer
+  before the code is blamed.
+
 - **The collection policy panel renders library prose in the reader's language.** `privacy.mjs` emitted
   the deletion vocabulary, the reason behind a collection decision and the `permanentDeletion`
   explanation as Chinese sentences, so the settings page showed Chinese in English and the CLI showed
@@ -350,6 +360,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The transcript view failed as soon as it listed a session.** Converting the view to the message
+  catalogue gave its "how long ago" helper a translator argument, and both call sites that render an
+  age kept passing the timestamp alone, so the first row of the session list threw `t is not a
+  function` while the view rendered - the same throw the browser console reported for the header of
+  the open session. A third site carried the mistake in another shape: the map over a session's real
+  transcript named its turn `t`, which shadowed the translator that the user bubble beside it then
+  called, so the real-transcript tab failed as soon as a transcript held a user turn. The age call
+  sites pass the translator, the turn has a name of its own, and the committed bundle is rebuilt.
 - **Rebinding a host that already ran a previous install left it with two sets of hooks.** A hook entry
   was recognised as this system's only when its command named *this* install's `hook-runner.mjs`, so the
   entries left by an earlier install - the ones a move of the memory home or the program is supposed to
