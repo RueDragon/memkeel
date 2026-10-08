@@ -360,7 +360,7 @@ function ownsHook(hook, host) {
 function hookDeclaration(host, zcode) {
   if (zcode) return { type: 'process', command: process.execPath, args: [runnerPath, host, '--home', memoryHome], timeoutMs: 90000 };
   const command = `"${nodeBin}" "${runnerPath}" ${host} --home "${memoryHome}"`;
-  if (host === 'codex') return { type: 'command', command, commandWindows: command, async: false, timeoutSec: 90 };
+  if (host === 'codex') return { type: 'command', command, commandWindows: `& ${command}`, async: false, timeoutSec: 90 };
   return { type: 'command', command, timeout: 90 };
 }
 function hooksJson(file, old, host, events, zcode = false) {
