@@ -54,16 +54,16 @@ function TranscriptView({ loading, data }) {
         ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('sessions.emptyFile')} style={{ padding: 24 }} />
         : (
           <div className="transcript-stream">
-            {data.turns.map((t, i) => (
-              <div key={i} className={`chat-row chat-row--${t.role === 'user' ? 'user' : 'agent'}`}>
-                {t.role === 'user'
+            {data.turns.map((turn, i) => (
+              <div key={i} className={`chat-row chat-row--${turn.role === 'user' ? 'user' : 'agent'}`}>
+                {turn.role === 'user'
                   ? <>
-                      <div className="chat-bubble chat-bubble--user chat-bubble--static"><Markdown>{t.text}</Markdown></div>
+                      <div className="chat-bubble chat-bubble--user chat-bubble--static"><Markdown>{turn.text}</Markdown></div>
                       <span className="chat-avatar">{t('chat.you')}</span>
                     </>
                   : <>
                       <span className="chat-avatar chat-avatar--agent">AI</span>
-                      <div className="chat-bubble chat-bubble--agent chat-bubble--static"><Markdown>{t.text}</Markdown></div>
+                      <div className="chat-bubble chat-bubble--agent chat-bubble--static"><Markdown>{turn.text}</Markdown></div>
                     </>}
               </div>
             ))}
@@ -192,7 +192,7 @@ export default function Sessions({ openDetail }) {
                         <div className="session-item-top">
                           <Tag color={HOST_COLOR[row.host] ?? 'default'}>{row.host}</Tag>
                           <span className="muted">{row.workspace || t('sessions.unknownWorkspace')}</span>
-                          <span className="muted session-time">{ago(row.updatedAt)}</span>
+                          <span className="muted session-time">{ago(row.updatedAt, t)}</span>
                         </div>
                         <div className="session-item-summary" title={t('sessions.firstMessage')}>
                           <span className="session-item-first">{t('sessions.opening')}</span>{clamp(row.summary || row.prompt || t('sessions.noTaskText'))}
@@ -222,7 +222,7 @@ export default function Sessions({ openDetail }) {
                       {detail.readOnly && <Tag color="red">{t('sessions.readOnly')}</Tag>}
                     </div>
                     <div className="muted session-detail-sub">
-                      <ClockCircleOutlined /> {ago(detail.updatedAt)}
+                      <ClockCircleOutlined /> {ago(detail.updatedAt, t)}
                       {detail.workspace && <span> · {detail.workspace}</span>}
                       {detail.model && <span> · {detail.model}</span>}
                       {detail.cwd && <Tooltip title={detail.cwd}><span> · {detail.cwd}</span></Tooltip>}

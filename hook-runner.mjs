@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import { processHook } from './lib/hooks.mjs';
-import { drainCheckpoints } from './lib/checkpoints.mjs';
-import { createTransport } from './lib/storage/index.mjs';
+import { startCheckpointWorker } from './lib/checkpoint-worker.mjs';
 import { loadConfig, resolveHome } from './lib/config.mjs';
 
 // Home precedence is shared with the CLI and the MCP server.
@@ -19,12 +18,8 @@ try {
     catch (error) { if (!/Writer locked/.test(error.message) || attempt === 19) throw error; await new Promise((resolve) => setTimeout(resolve, 100)); }
   }
   process.stdout.write(JSON.stringify(result ?? {}) + '\n');
-  if (['Stop', 'PreCompact', 'SessionEnd'].includes(input.hook_event_name)) {
-    const drained = drainCheckpoints(config, createTransport(config), { limit: 2 });
-    if (drained.errors.length) {
-      process.stderr.write('Memory checkpoint queued for maintenance; durable write not complete: ' + drained.errors.map((r) => r.error).join('; ') + '\n');
-      process.exitCode = 1;
-    }
+  if (['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact', 'SessionEnd'].includes(input.hook_event_name)) {
+    startCheckpointWorker(root);
   }
 } catch (error) {
   // Do not prevent unrelated work when recall is unavailable. Definite command

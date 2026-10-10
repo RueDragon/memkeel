@@ -45,6 +45,7 @@
     "check": "node scripts/check-syntax.mjs",
     "leak-scan": "node scripts/leak-scan.mjs",
     "pack-scan": "node scripts/pack-scan.mjs",
+    "sync-app": "node scripts/sync-app.mjs",
     "setup": "node setup.mjs",
     "dashboard": "node dashboard.mjs",
     "dashboard:build": "npm --prefix dashboard/app run build",

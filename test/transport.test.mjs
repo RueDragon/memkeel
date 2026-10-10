@@ -51,6 +51,29 @@ test('an exact replacement keeps its provenance inside the memory home and leaks
   assert.ok(entries.some((name) => name.endsWith('.json')), 'the replacement record is kept');
   assert.ok(entries.some((name) => fs.statSync(path.join(backups, name)).isDirectory()), 'the generated patch is kept as durable provenance');
 });
+test('replacement retries a stale vault view without rewriting the published bytes', (t) => {
+  const { config, transport } = fixture(t);
+  const file = path.join(config.vaultRoot, 'note.md');
+  fs.writeFileSync(file, 'before\n');
+  let reads = 0;
+  transport.read = () => {
+    reads += 1;
+    return reads === 1 ? 'before' : fs.readFileSync(file, 'utf8').trim();
+  };
+  assert.equal(transport.replace('note.md', 'before\n', 'after\n'), true);
+  assert.equal(reads, 2);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'after\n');
+});
+
+test('replacement still reports a persistent vault view mismatch and preserves its bytes', (t) => {
+  const { config, transport } = fixture(t);
+  const file = path.join(config.vaultRoot, 'note.md');
+  fs.writeFileSync(file, 'before\n');
+  transport.read = () => 'before';
+  assert.throws(() => transport.replace('note.md', 'before\n', 'after\n'), /readback mismatch/i);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'after\n');
+});
+
 test('concurrent target mutation is rejected without replacement', (t) => {
   const { config, transport } = fixture(t); fs.writeFileSync(path.join(config.vaultRoot, 'existing.md'), 'user changed');
   assert.throws(() => transport.replace('existing.md', 'old', 'new'), /Concurrent/);
