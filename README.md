@@ -83,7 +83,7 @@ anything to use it either.
 
 ### As an npm package (not published yet)
 
-The package is prepared for npm, but v1.0.0 ships from GitHub and the npm release is planned
+The package is prepared for npm, but v1.0.1 ships from GitHub and the npm release is planned
 for v1.1. Until then, install from a clone.
 
 ```bash
@@ -279,6 +279,60 @@ still resolves to the same role map, so existing stores keep working byte-for-by
 migration.
 
 ## Storage backends
+
+### Reliable Capture Delivery
+
+Hooks collect a bounded, redacted **reported** checkpoint without blocking Stop or asking for
+another answer. Normal searches, path exploration and failed tools do not demand memory writes.
+Agents distill only important explicit decisions, verified corrections/completed stages, or an
+explicit request to remember, at a meaningful stage boundary. Reported checkpoints are never
+automatically promoted to facts or long-term habits.
+
+MCP `capture` validates and durably queues by default; `wait: true` explicitly retains synchronous
+behavior. CLI `capture` remains synchronous; add `--async` to submit without waiting for vault IO.
+Query `agent_memory_read` with `{ "action": "status", "receipt_id": "your-event-id" }`, or use:
+
+```bash
+memkeel capture --file INPUT.json --async
+memkeel capture-status --id your-event-id
+memkeel capture-drain
+memkeel capture-retry --id your-event-id
+```
+
+`queued` means **queue persisted only**, `recorded` means ledger bytes exist but projections are
+incomplete, `ready` means recording and consolidation completed, and `needs_attention` means a
+permanent failure or exhausted retry budget. `disk` and `view` separately report file persistence
+and Obsidian verification. A failed CLI read may follow a successful publication; never infer
+"nothing was written" from that exception. Receipts never include the evidence body.
+
+The existing detached checkpoint worker now also consumes captures, records a batch and consolidates
+once. Submission is idempotent by event id plus canonical digest; changed content under the same id
+is refused. Retry payloads and exponential delays survive restarts, with a six-attempt limit and
+permanent failures isolated from later items. `capture-drain` respects stored backoff; `capture-retry`
+is an explicit operator action after fixing a cause, not an automatic unbounded retry. Hooks/new
+capture submissions restart pending work after a crash; a completely idle host needs an explicit
+drain. No read launches a worker or claims a pending topic projection is current.
+
+Windows protocol-2 state, queue and consumer locks use the same per-directory kernel mutex before
+acquiring their owner file. A new consumer can safely recover a provably dead same-host protocol-2
+owner under that mutex. Legacy, unreadable, foreign-host and POSIX file locks remain fail-closed and
+require all writers stopped before manual recovery. Do not remove a live lock or mix old and new
+writers during rollout. Queue files and receipts are private transport state included in backups;
+they are not substitutes for the immutable Markdown ledger.
+
+Checkpoint identity is session + user turn + substantive answer digest. Hosts should supply
+`turn_id` (or `turnId`, `user_message_id`, `message_id`) to identify duplicate prompt callbacks;
+without one, a prompt after Stop starts a new turn even when its text repeats. Duplicate Stop,
+PreCompact and SessionEnd callbacks and memory-only replies retain the substantive answer. A later
+substantive revision appends a new immutable event and explicitly supersedes the same turn context;
+previously consumed events are never edited, and separate real turns no longer replace each other.
+
+For a headless store, choose existing **`storage: "filesystem"`** explicitly. It writes the same
+Markdown layout and verifies atomic disk publication without an Obsidian process or CLI. To migrate
+an existing Obsidian-backed store, stop writers, back up the home and vault, change only `storage`,
+keep `vaultRoot`/roles unchanged, validate configuration and inspect receipts before restarting hosts.
+This is a deliberate selection, never an automatic fallback. Strict `obsidian-cli` keeps its CLI
+view requirement for compatibility; disk publication and view health are separate states.
 
 Every backend implements the same five verbs — `read`, `create`, `append`, `replace`,
 `verify` — so no caller ever branches on which one is active (`lib/storage/adapter.mjs`).

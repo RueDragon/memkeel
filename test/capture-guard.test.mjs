@@ -31,7 +31,7 @@ function fixture(t) {
   const config = { policyRoot: path.join(root, 'policy'), vaultRoot: path.join(root, 'vault'), workRoot: 'work',
     projectRoot: 'work/projects', inboxRoot: 'work/inbox', eventsRoot: 'work/events', habitsNote: 'work/habits.md',
     actionsNote: 'work/actions.md', mistakesNote: 'work/mistakes.md', preferenceCandidatesNote: 'work/candidates.md',
-    activeLimit: 6, recentLimit: 6, budgetBytes: 14000, topics, now: '2026-09-10T09:30:00Z' };
+    activeLimit: 6, recentLimit: 6, budgetBytes: 14000, topics: [...topics], now: '2026-09-10T09:30:00Z' };
   const put = (p, c) => { const file = path.join(config.vaultRoot, p); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, c); };
   fs.mkdirSync(config.policyRoot, { recursive: true });
   fs.mkdirSync(path.join(config.vaultRoot, config.eventsRoot), { recursive: true });
@@ -120,4 +120,28 @@ test('an oversized event is accepted since the 2600-byte ceiling was removed', (
   assert.equal(result.event_id, base.event_id);
   const journal = fs.readFileSync(path.join(config.vaultRoot, result.path), 'utf8');
   assert.ok(journal.includes('x'.repeat(2500)), 'the large fact must be stored, not dropped');
+});
+
+test('input sent as a JSON string, with evidence_text inside it, is accepted', (t) => {
+  const { config, transport } = fixture(t);
+  const result = capture(config, transport, JSON.stringify({ ...base, evidence_text: goodEvidence }), undefined);
+  assert.equal(result.event_id, base.event_id);
+});
+
+test('a missing topic is auto-registered when the workspace exists and the id is well formed', (t) => {
+  const { config, transport, put } = fixture(t);
+  put('work/projects/workspace-my-project.md', '---\nworkspace: my-project\nproject: My project\nstatus: active\n---\n# My project');
+  fs.writeFileSync(path.join(config.policyRoot, 'config.json'), JSON.stringify({ topics: [...topics] }));
+  const event = { ...base, event_id: 'guard-test-0002', topic: 'my-project/new-topic' };
+  const result = capture(config, transport, event, goodEvidence);
+  assert.equal(result.autoRegisteredTopic, 'my-project/new-topic');
+  assert.ok(config.topics.some((row) => row.id === 'my-project/new-topic'));
+});
+
+test('a missing topic is not auto-registered for an unknown workspace or a mismatched prefix', (t) => {
+  const { config, transport } = fixture(t);
+  for (const topic of ['my-project/new-topic', 'other/new-topic', 'Bad Topic']) {
+    assert.throws(() => capture(config, transport, { ...base, event_id: 'guard-test-0003', topic }, goodEvidence), /Unknown topic\/workspace/);
+  }
+  assertNothingRecorded(config, 'guard-test-0003');
 });

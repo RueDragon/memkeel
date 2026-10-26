@@ -17,9 +17,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { processHook } from '../lib/hooks.mjs';
 import { sha } from '../lib/transport.mjs';
+import { drainCheckpoints } from '../lib/checkpoints.mjs';
+import { loadEvents } from '../lib/core.mjs';
+import { createTransport } from '../lib/storage/index.mjs';
+import { learningProjection } from '../lib/experience.mjs';
 
 const FAILURE_ADVISORY = /本次工具失败不是已确认错误/;
-const SEARCH_ADVISORY = /已进行多步搜索/;
 const DEFERRED_MARKER = /延后送达/;
 
 function fixture(t) {
@@ -85,22 +88,40 @@ test('several tool results inside one assistant message are all deferred, bounde
   assert.equal(delivered, 3, 'all three retained advisories arrive together');
 });
 
-test('the multi-step search advisory fires on the fifth tool result and is deferred for Codex', (t) => {
+test('five searches no longer queue an advisory', (t) => {
   const { config, project, call } = fixture(t);
   const cwd = project();
   processHook(config, 'codex', call(cwd, 'search', 'UserPromptSubmit', { prompt: 'find the definition' }));
-
-  for (let index = 1; index <= 4; index++) {
+  for (let index = 1; index <= 6; index++) {
     processHook(config, 'codex', call(cwd, 'search', 'PostToolUse', { tool_name: 'Grep', tool_input: { command: 'rg adapter src' } }));
   }
-  assert.deepEqual(stateOf(config, 'codex', 'search').deferredAdvisory ?? [], [], 'nothing is queued before the fifth result');
-
-  processHook(config, 'codex', call(cwd, 'search', 'PostToolUse', { tool_name: 'Grep', tool_input: { command: 'rg adapter src' } }));
-  const queued = stateOf(config, 'codex', 'search').deferredAdvisory;
-  assert.equal(queued.length, 1);
-  assert.match(queued[0].text, SEARCH_ADVISORY);
+  assert.deepEqual(stateOf(config, 'codex', 'search').deferredAdvisory ?? [], []);
 });
 
+test('Stop after substantive work never blocks or requests a memory-only continuation', (t) => {
+  const { config, project, call } = fixture(t);
+  const cwd = project();
+  processHook(config, 'dsh', call(cwd, 's1', 'UserPromptSubmit', { prompt: 'fix the bug' }));
+  for (let i = 0; i < 3; i++) processHook(config, 'dsh', call(cwd, 's1', 'PostToolUse', { tool_name: 'Read', tool_input: {} }));
+  const first = processHook(config, 'dsh', call(cwd, 's1', 'Stop', { last_assistant_message: 'done' }));
+  assert.deepEqual(first, {});
+  const second = processHook(config, 'dsh', call(cwd, 's1', 'Stop', { last_assistant_message: 'nothing to record', stop_hook_active: true }));
+  assert.notEqual(second.decision, 'block');
+});
+
+test('Stop does not ask after trivial turns, memory use, read-only turns or when opted out', (t) => {
+  const { config, project, call } = fixture(t);
+  const cwd = project();
+  const stop = (session, prompt, tools, tool = 'Read', cfg = config) => {
+    processHook(cfg, 'dsh', call(cwd, session, 'UserPromptSubmit', { prompt }));
+    for (let i = 0; i < tools; i++) processHook(cfg, 'dsh', call(cwd, session, 'PostToolUse', { tool_name: tool, tool_input: {} }));
+    return processHook(cfg, 'dsh', call(cwd, session, 'Stop', { last_assistant_message: 'done' }));
+  };
+  assert.notEqual(stop('t1', 'hi', 1).decision, 'block', 'too little work');
+  assert.notEqual(stop('t2', 'fix it', 4, 'mcp__agent_memory__agent_memory').decision, 'block', 'memory already used');
+  assert.notEqual(stop('t3', '只读验收，不要记录', 4).decision, 'block', 'read-only turn');
+  assert.notEqual(stop('t4', 'fix it', 4, 'Read', { ...config, hook: { stopReminder: false } }).decision, 'block', 'opted out');
+});
 for (const host of ['claude', 'zcode', 'dsh']) {
   test(`${host} receives the advisory inline instead of deferred`, (t) => {
     const { config, project, call } = fixture(t);
@@ -137,4 +158,63 @@ test('a deny decision is returned immediately even while deferral is active', (t
 
   // The advisory it would otherwise have injected is still queued for the next prompt.
   assert.equal(stateOf(config, 'codex', 'deny').deferredAdvisory.length, 1);
+});
+
+test('double Stop, PreCompact and memory-only replies retain one effective checkpoint per user turn', (t) => {
+  const { config, project, call } = fixture(t);
+  const cwd = project();
+  const send = (event, extra = {}) => processHook(config, 'dsh', call(cwd, 'dedup', event, extra));
+  send('UserPromptSubmit', { prompt: 'fix the synthetic adapter', turn_id: 'turn-one' });
+  send('PreCompact', { last_assistant_message: 'Investigation identified the adapter boundary.' });
+  drainCheckpoints(config, createTransport(config));
+  const first = loadEvents(config)[0];
+  send('Stop', { last_assistant_message: 'The adapter was repaired and the synthetic regression passed.' });
+  send('Stop', { last_assistant_message: 'nothing to record', stop_hook_active: true });
+  send('SessionEnd');
+  drainCheckpoints(config, createTransport(config));
+  const events = loadEvents(config);
+  assert.equal(events.length, 2, 'one immutable revision after a consumed PreCompact, no duplicate Stop');
+  const effective = learningProjection(events).entries.filter((row) => row.type === 'contexts');
+  assert.equal(effective.length, 1);
+  assert.match(effective[0].text, /regression passed/);
+  assert.equal(events[1].contexts[0].supersedes, first.event_id);
+  assert.equal(events[1].contexts[0].certainty, 'reported');
+  send('UserPromptSubmit', { prompt: 'fix the synthetic adapter', turn_id: 'turn-one' });
+  assert.equal(stateOf(config, 'dsh', 'dedup').turn, 1, 'duplicate host prompt callback uses stable turn token');
+  send('UserPromptSubmit', { prompt: 'fix the synthetic adapter', turn_id: 'turn-two' });
+  send('Stop', { last_assistant_message: 'A separate user turn produced a different response.' });
+  drainCheckpoints(config, createTransport(config));
+  assert.equal(learningProjection(loadEvents(config)).entries.length, 2, 'identical real prompts remain distinct turns');
+});
+
+test('read-only memory tool is not a write receipt; queued is not ready and tool errors never count as saved', (t) => {
+  const { config, project, call } = fixture(t);
+  const cwd = project();
+  const send = (extra) => processHook(config, 'dsh', call(cwd, 'receipt', 'PostToolUse', extra));
+  processHook(config, 'dsh', call(cwd, 'receipt', 'UserPromptSubmit', { prompt: 'inspect the adapter' }));
+  send({ tool_name: 'mcp__agent_memory__agent_memory_read', tool_input: { action: 'recall' }, tool_response: {} });
+  assert.equal(stateOf(config, 'dsh', 'receipt').memoryUsed, false);
+  send({ tool_name: 'mcp__agent_memory__agent_memory', tool_input: { action: 'capture' }, tool_response: { event_id: 'queue-event-0001', status: 'queued' } });
+  assert.equal(stateOf(config, 'dsh', 'receipt').memoryUsed, false);
+  assert.equal(stateOf(config, 'dsh', 'receipt').memoryReceipt.status, 'queued');
+  send({ tool_name: 'mcp__agent_memory__agent_memory', tool_input: { action: 'capture' }, tool_response: { isError: true, event_id: 'queue-event-0001', status: 'ready' } });
+  assert.equal(stateOf(config, 'dsh', 'receipt').memoryUsed, false);
+  send({ tool_name: 'mcp__agent_memory__agent_memory', tool_input: { action: 'capture' }, tool_response: { event_id: 'queue-event-0001', status: 'ready' } });
+  assert.equal(stateOf(config, 'dsh', 'receipt').memoryUsed, true);
+});
+
+test('explicit no-record prompts and disabled collection never enter checkpoint payloads', (t) => {
+  const { config, project, call } = fixture(t);
+  const cwd = project();
+  for (const [session, cfg, prompt] of [['private', config, 'Do not record synthetic-private-marker'],
+    ['disabled', { ...config, collection: { enabled: false } }, 'synthetic-disabled-marker']]) {
+    processHook(cfg, 'dsh', call(cwd, session, 'UserPromptSubmit', { prompt }));
+    processHook(cfg, 'dsh', call(cwd, session, 'Stop', { last_assistant_message: 'synthetic response marker' }));
+    const state = stateOf(cfg, 'dsh', session);
+    assert.equal(state.checkpoint.status, 'skipped');
+    assert.equal(state.prompt, '');
+    assert.equal(state.factRecall.query, '');
+    assert.equal(state.lastAssistant, '');
+  }
+  assert.equal(fs.existsSync(path.join(config.policyRoot, 'state/hook-queue')), false);
 });

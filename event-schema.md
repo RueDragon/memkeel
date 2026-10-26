@@ -12,14 +12,20 @@ For both arrays, revise the same id with supersedes set to its previous event_id
 
 ## Confined Host Capture
 
-Prefer the `agent_memory` MCP tool when available. Call `action: capture`, with `input` containing event_id, workspace, topic, agent and small facts/actions/verification arrays, plus a separate `evidence_text` string describing actual observations (plain Markdown, no raw logs, fences or HTML comments). Capture writes the evidence note bytes straight to the vault file and confirms them with an Obsidian read, attaches its source, records the event, consolidates and verifies. For a just-completed action, capture may omit occurred_at and evidence; the service assigns its current timestamp and source. Historical imports must supply their original occurred_at. Reuse the exact event_id, input and evidence_text on retries. Do not record success when the observation failed.
+Prefer the `agent_memory` MCP tool when available. Call `action: capture`, with `input` containing event_id, workspace, topic, agent and small facts/actions/verification arrays, plus a separate `evidence_text` string describing actual observations (plain Markdown, no raw logs, fences or HTML comments). Object input is preferred; a JSON-encoded object or embedded evidence_text is also accepted, but conflicting evidence arguments are rejected. Normalization, event/evidence/secret validation happen before registration, queue publication or vault writes. For a just-completed action, capture may omit occurred_at and evidence; the service assigns its current timestamp and source. Historical imports must supply their original occurred_at. Reuse the exact event_id, input and evidence_text on retries. Do not record success when the observation failed.
+
+MCP capture defaults to durable asynchronous submission; `wait: true` explicitly opts into the existing synchronous behavior. CLI capture remains synchronous unless `--async` is supplied. A receipt distinguishes `queued` (queue only), `recorded` (ledger published, consolidation pending), `ready` (ledger and projections complete), and `needs_attention` (permanent failure or retry budget exhausted). Query MCP status with `receipt_id`, or `capture-status --id EVENT_ID`. The `disk` field distinguishes `not_recorded`, `evidence_file`, and `recorded`; `view` distinguishes not-checked, not-required filesystem verification and healthy/unhealthy Obsidian CLI view. A failed CLI read can follow successful disk publication: never claim failure implies no bytes landed. Strict `obsidian-cli` remains strict and never falls back automatically. Use `storage: filesystem` explicitly for verified atomic disk writes with no running Obsidian dependency.
+
+The single background consumer records a batch before consolidating once. Transient IO/CLI/lock failures persist exponential backoff with at most six attempts; schema/digest/secret errors are not retried. One failed item does not block later items. `capture-drain` resumes eligible items without bypassing persisted delays. After repairing a cause, `capture-retry --id EVENT_ID` explicitly resets a validated receipt's retry budget. Ordinary reads never launch a worker or mutate these states. Queued receipts are private transport data, not archived memories. New Windows protocol-2 locks recover provably dead same-host holders under a shared kernel mutex; old/unreadable/foreign locks and POSIX file locks require stopped-writer manual recovery. Do not delete a live or unverifiable holder's lock.
+
+Checkpoint-only projection retries also persist their deadline and six-attempt budget in private worker state. Worker restarts respect that deadline; capture-owned projections are never retried through a second worker path. After a permanent or exhausted projection failure, repair the cause and explicitly run `consolidate` or `maintenance`; ordinary reads do not reset the budget.
 
 Use `agent_memory_read` for bootstrap/recall/status/help. `action: bootstrap` requires actual cwd and optional query; it is read-only. `recall` uses query/workspace/history. Do not also run CLI bootstrap after successful MCP bootstrap. Keep host write approvals; this contract does not grant permission by itself.
 
 
 ## Copy-Safe MCP Write Recipe
 
-Use the write-capable agent_memory tool only after a verified decision, discovery, correction or reusable experience. The normal call is:
+Use the write-capable agent_memory tool at a meaningful stage boundary for an important explicit decision, verified correction/completed stage or explicit user request to remember. Ordinary path exploration, search counts and tool failures do not require capture. The normal call is:
 
 ~~~json
 {
@@ -36,7 +42,7 @@ Use the write-capable agent_memory tool only after a verified decision, discover
 }
 ~~~
 
-Only if the topic does not exist, register it first with input.id, not input.topic or input.key:
+A missing workspace/key topic in an existing workspace is safely auto-registered after validation. To choose its title explicitly, register with input.id, not input.topic or input.key (identical metadata retries are idempotent; conflicting metadata is refused):
 
 ~~~json
 {
@@ -50,7 +56,7 @@ Only if the topic does not exist, register it first with input.id, not input.top
 }
 ~~~
 
-If capture fails, report that it was not saved. Do not claim an Obsidian write unless the tool returns success.
+Report the actual receipt state. `queued` is not saved to the ledger, and `recorded` is not fully consolidated. On an exception inspect the receipt/ledger before assuming nothing was written; do not claim an Obsidian view is healthy when CLI verification failed.
 
 ## Long Content: Note Body Plus A Pointer Event (Plan A)
 
@@ -59,7 +65,7 @@ There is no event size ceiling: the former 2600-byte event limit (`lib/core.mjs`
 For genuinely long bodies (long summaries, analyses, investigation records) the recommended shape is still prose in a note plus a small pointer event, because that keeps each event atomic and keeps injection lean:
 
 1. Put the prose in a long-form note at `digest/longform/<YYYY-MM-DD>-<workspace>-<topic-key>.md`, one `## <event_id>` block per record. That folder sits under inboxRoot and outside eventsRoot, so it is never scanned or parsed as a journal.
-2. Never send content through the Obsidian CLI arguments: the CLI decodes the two-character sequences backslash-n and backslash-t and offers no way to escape a literal backslash before them (measured 2026-09-10 and re-confirmed 2026-09-14: a Windows path such as C:\temp\new\file.md lands as C:<TAB>emp<LF>ew\file.md). Write the bytes to the vault path directly, then confirm with `read` through the CLI and compare byte for byte, rolling back on any mismatch. CLI reads are byte-faithful, so they stay the verification channel.
+2. Never send content through the Obsidian CLI arguments: the CLI decodes the two-character sequences backslash-n and backslash-t and offers no way to escape a literal backslash before them. Write bytes atomically to disk and verify the file. Strict obsidian-cli additionally confirms the CLI view. Report a view mismatch; do not roll back a successful publication, which could delete valid evidence or another append.
 3. Keep the event a pointer when the body is long: `evidence: ["<long-form path>#<event_id>"]` with the conclusion in `facts`. Do not duplicate a long body into the event merely because it now fits.
 4. Use the same `event_id` for the note block and its pointer event.
 

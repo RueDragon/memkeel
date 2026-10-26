@@ -1,6 +1,6 @@
 {
   "name": "memkeel",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Local-first agent memory ledger shared by Codex, Claude Code, ZCode and dsh. Markdown is the source of truth; every memory is an immutable, evidence-backed event.",
   "license": "MIT",
   "type": "module",
@@ -20,6 +20,9 @@
     "lib/",
     "scripts/",
     "examples/",
+    "docs/knowledge-upgrade-acceptance.md",
+    "docs/local-semantic-shadow.md",
+    "scripts/smoke-local-generator.mjs",
     "vendor/",
     "dashboard/static/",
     "dashboard.mjs",

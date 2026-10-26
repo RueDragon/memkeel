@@ -7,6 +7,8 @@ import { bootstrap, consumptionStatus, recall, record, consolidate, refreshIndex
 import { inside, inspectLock } from './lib/transport.mjs';
 import { createTransport } from './lib/storage/index.mjs';
 import { capture, decideHabit, maintain } from './lib/lifecycle.mjs';
+import { submitCapture, captureStatus, drainCaptures, retryCapture } from './lib/capture-queue.mjs';
+import { startCheckpointWorker } from './lib/checkpoint-worker.mjs';
 import { checkpointHealth } from './lib/checkpoint-audit.mjs';
 import { recallLearning, checkOperation, loadEvents } from './lib/core.mjs';
 import { applyRetention, loadRetention, retentionCandidates } from './lib/retention.mjs';
@@ -45,6 +47,7 @@ if (options.home === true) throw new Error(t('cli.error.homeNeedsDirectory'));
 const { home: policyRoot, source: homeSource } = resolveHome({ home: typeof options.home === 'string' ? options.home : '' });
 const configPath = path.join(policyRoot, 'config.json');
 if (command === 'help') {
+  console.log('Capture delivery: CLI capture waits by default; add --async for durable queued receipt.\ncapture-status [--id EVENT_ID]  (read-only receipt query)\ncapture-drain  (resume eligible queued/recorded items; respects backoff)\ncapture-retry --id EVENT_ID  (explicitly reset a validated receipt after repairing its cause)\nMCP capture queues by default; wait:true opts into synchronous completion. queued != recorded != ready; needs_attention is not a success claim.');
   console.log(`Agent Memory ${VERSION}\nbootstrap --cwd PATH --query TEXT [--workspace ID] [--json] [--all] [--audit]\nrecall --query TEXT [--workspace ID|NAME|PATH] [--history]\nworkspace-add --cwd DIR  (register the project at DIR as a workspace so it can hold topics and events)\nregister --topic WORKSPACE/KEY --workspace ID --title TEXT [--alias TEXT]\nrecord --file EVENT.json | record --stdin\ncapture --file INPUT.json | capture --stdin  (input: {event, evidence_text})\nhabit-decide --file INPUT.json | habit-decide --stdin\nconsolidate  (pending means remaining; pendingBefore means starting backlog)
 retain --candidates [--since ISO] [--limit N]  (read-only: automatic checkpoints still undecided)
 retain --file DECISIONS.json | retain --stdin  ({decisions:[{event_id, decision: drop|keep, reason}]}; soft drop, consolidates)
@@ -254,10 +257,21 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
     } else if (['record', 'capture', 'habit-decide'].includes(command)) {
       if (!options.file && !options.stdin) throw new Error(t('cli.error.supplyFileOrStdin'));
       const input = JSON.parse(fs.readFileSync(options.stdin ? 0 : options.file, 'utf8').replace(/^\uFEFF/, ''));
-      if (command === 'capture') result = capture(config, transport, input.event, input.evidence_text);
+      if (command === 'capture') {
+        result = options.async ? submitCapture(config, input.event ?? input.input, input.evidence_text) : capture(config, transport, input.event ?? input.input, input.evidence_text);
+        if (options.async) startCheckpointWorker(policyRoot);
+      }
       else if (command === 'habit-decide') result = decideHabit(config, transport, input);
       else result = { ...record(config, transport, input), consolidation: consolidate(config, transport) };
       console.log(JSON.stringify(result, null, 2));
+    } else if (command === 'capture-status') {
+      console.log(JSON.stringify(captureStatus(config, options.id), null, 2));
+    } else if (command === 'capture-drain') {
+      console.log(JSON.stringify(drainCaptures(config, transport), null, 2));
+    } else if (command === 'capture-retry') {
+      if (!options.id) throw new Error('capture-retry requires --id EVENT_ID');
+      console.log(JSON.stringify(retryCapture(config, options.id), null, 2));
+      startCheckpointWorker(policyRoot);
     } else if (command === 'workspace-add') {
       // A brand-new store has no routes, so this is how a user registers their first
       // one without waiting for a hook checkpoint. The id is derived from the project
@@ -361,6 +375,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       const launcher = launcherReport({ command: process.execPath, files: ['mcp-server.mjs', 'hook-runner.mjs', 'dsh-memory-plugin.mjs'].map((name) => path.join(sourceRoot, name)) });
       const receipt = { exists: install.exists, malformed: install.malformed, format: install.format, version: install.version, legacy: install.legacy, at: install.at, memoryHome: install.memoryHome, files: Object.keys(install.files).length };
       const checkpoints = checkpointHealth(config, events);
+      const asyncCaptures = captureStatus(config);
       // Consumption is a different queue from the capture plans: events already in the ledger that
       // consolidation has not consumed. `consumptionStatus` throws when its checkpoint names bytes that
       // no longer match, which is corruption rather than a backlog, so the two never share one count.
@@ -376,6 +391,7 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       const locks = [['setup', setupLock], ['state', lock], ['hook-queue', checkpointLock]];
       const stuck = locks.filter(([, row]) => row.stale).map(([name, row]) => `${name} (${row.file})`);
       const pending = { events: consumption.pending, topics: consumption.pendingTopics, captures: captures.pending.length,
+        asyncCaptures: asyncCaptures.pending, captureAttention: asyncCaptures.needs_attention,
         checkpoints: checkpoints.pending.length, unsettledInstalls: unsettled.length, unbuiltNotes: unbuilt.length };
       // What a reader should act on, and what this section must not do: promise that pending work settles
       // itself while a stale writer lock is in the way. Every writer refuses to enter while that lock
@@ -397,14 +413,16 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
         next: 'consolidate writes a topic note once that topic has events; maintenance --rebuild repairs a projection that was removed' });
       for (const row of corrupt) recovery.push({ state: 'corrupt', what: `${row.what} cannot be read: ${row.error}`,
         next: 'this needs a person: restore it from a backup or repair the named file. Nothing here rewrites or deletes it.' });
-      const check = { version: VERSION, effectiveHome: { path: policyRoot, source: homeSource }, missing, unbuilt, ledger, pending, recovery, captures, checkpoints, lock, checkpointLock, setupLock,
+      if (asyncCaptures.pending || asyncCaptures.needs_attention) recovery.push({ state: asyncCaptures.needs_attention ? 'needs_attention' : 'pending',
+        what: 'Asynchronous capture receipts are not all ready', next: 'capture-status [--id EVENT_ID]; capture-drain respects backoff; after repairing the cause use capture-retry --id EVENT_ID' });
+      const check = { version: VERSION, effectiveHome: { path: policyRoot, source: homeSource }, missing, unbuilt, ledger, pending, recovery, captures, asyncCaptures, checkpoints, lock, checkpointLock, setupLock,
         receipt, bindingDrift: drift, launcher,
         routes: loadRoutes(config).map((row) => row.id), engine: 'obsidian-mind/af615d1 applyInjectionBudget (read-only adapter)', hostIntegration: 'File verification is not a host new-session smoke test.' };
       console.log(JSON.stringify(check, null, 2));
       // `unknown` drift is not unhealthy: a legacy receipt simply cannot answer the question, and
       // saying "ok" would be a guess while failing the run would be noise. Actual drift is not
       // healthy either, but it is not fatal to the store - it is reported for the user to fix.
-      if (missing.length || stuck.length || pending.events || captures.pending.length || !checkpoints.healthy || receipt.malformed || !launcher.ok || corrupt.length) process.exitCode = 1;
+      if (missing.length || stuck.length || pending.events || captures.pending.length || asyncCaptures.pending || asyncCaptures.needs_attention || asyncCaptures.corrupt.length || !checkpoints.healthy || receipt.malformed || !launcher.ok || corrupt.length) process.exitCode = 1;
     } else throw new Error(t('cli.error.unknownCommand', { command }));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

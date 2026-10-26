@@ -2,6 +2,37 @@
 
 # Memkeel
 
+## 可靠异步采集与存储选择
+
+普通搜索、路径探索、工具失败不再触发记忆催促，Stop 不再要求 Agent 多回复一轮。
+Hook 自动采集脱敏、截断的 reported 短期检查点；只有重要明确决定、已核实修复/阶段完成，
+或用户明确要求记住，才在阶段边界提炼精简事件。检查点不自动晋升为事实或长期习惯。
+
+MCP `capture` 默认持久入队并快速返回；`wait: true` 显式等待同步落库与整理。
+CLI `capture` 默认保留同步行为，`--async` 才异步提交。使用只读 MCP `status` 加
+`receipt_id`，或 `capture-status --id EVENT_ID` 查询回执。
+
+- `queued`：仅队列持久化，不能说已正式归档。
+- `recorded`：不可变账本已落盘，投影整理尚未完成。
+- `ready`：落库与整理完成。
+- `needs_attention`：永久失败或达到重试上限，必须排查，不等于没有写入。
+
+`disk` 单独描述文件是否存在；`view` 描述 Obsidian 视图是否健康。CLI 回读失败可能发生在
+字节已落盘之后，不应自动回滚或声称完全没有写入。相同 event_id 与内容幂等，改内容必须换 id。
+后台复用原检查点 worker，逐条落库后按批整理一次；临时 IO/CLI/锁失败持久指数退避，最多六次，
+永久失败隔离，不堵后续记录。`capture-drain` 继续符合退避时间的任务；修复原因后使用
+`capture-retry --id EVENT_ID` 显式重置重试预算。普通读取不启动 worker，也不把待处理主题当最新投影。
+
+双 Stop、PreCompact、SessionEnd 和仅记忆收尾不会覆盖实质答复；同一轮的实质修订追加不可变事件并
+显式 supersedes，独立用户轮次分别保留。宿主应提供 `turn_id` 等稳定用户轮次标识以去重重入 prompt；
+没有标识时，Stop 后即使输入相同文字也视为新的用户轮次。
+
+无需打开 Obsidian 时，显式选择已有的 `storage: "filesystem"`：同一 Markdown 格式、原子写入及文件
+回读，不调用 Obsidian CLI。迁移时先停写者、备份 home 与 vault，只改 `storage`，保持 `vaultRoot` 和
+roles 不变，再校验配置与回执并重启宿主。严格 `obsidian-cli` 保持原有回读要求，不自动降级。
+Windows 新 protocol-2 锁在同名内核互斥量保护下恢复已证实死亡的同机写者；旧版、不明、异机和 POSIX
+文件锁仍须停止全部写者后人工恢复，不得删除活锁。升级期间不要同时运行新旧写者。
+
 **面向编程 agent 的本地优先记忆账本。** 四种不同的 agent 宿主共享同一个纯 Markdown 存储，
 其中每一条记忆都是一个不可变、有证据支撑的事件。
 
@@ -80,7 +111,7 @@ CLI 和 Web 服务器全部运行在 Node 标准库之上。已提交的 Web 控
 
 ### 作为 npm 包安装（尚未发布）
 
-该包已为 npm 做好准备，但 v1.0.0 通过 GitHub 发布，npm 版本计划在 v1.1 提供。在此之前，
+该包已为 npm 做好准备，但 v1.0.1 通过 GitHub 发布，npm 版本计划在 v1.1 提供。在此之前，
 请从克隆的仓库安装。
 
 ```bash

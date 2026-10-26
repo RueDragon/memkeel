@@ -1,0 +1,34 @@
+{
+  "id": "zh-development-v1",
+  "labelStatus": "agent-authored-not-human-reviewed",
+  "documents": [
+    {"id":"shell","text":"复杂脚本不要经过多层 PowerShell 引号传递，应使用文件或编码传输。"},
+    {"id":"fees","text":"基金赎回费用根据买入日期计算持有天数，再选择对应费率档位。"},
+    {"id":"evidence","text":"事实纠正必须明确关联被替代事件，时间更晚不能自动覆盖旧结论。"},
+    {"id":"privacy","text":"长期习惯需要用户明确确认，一次性的选择不能成为永久规则。"},
+    {"id":"stale","text":"新事件尚未消费时，旧主题快照可能滞后，不得作为当前状态。"},
+    {"id":"runtime","text":"开发目录和运行副本可能不一致，修改源码后必须核验实际加载路径。"},
+    {"id":"scope","text":"检索必须保持工作区隔离，相关内容也不能越过指定项目范围。"},
+    {"id":"origin","text":"同一材料被多个摘要转述仍属于一个原始来源，不应增加独立证据数。"},
+    {"id":"rollback","text":"派生任务失败不能阻止事实归档，后台任务应支持重试和明确失败状态。"},
+    {"id":"manual","text":"知识页只更新生成区块，保留区块外的手工笔记；生成区块被手改时拒绝覆盖。"},
+    {"id":"index","text":"模型或文本内容变化时向量索引需要重新构建，过期向量不能用于当前检索。"},
+    {"id":"local","text":"语义推理只调用回环地址，禁止远程接口与重定向，接口不可用时回退关键词检索。"},
+    {"id":"walk","text":"周末去公园散步，观看湖边的鸟。"}
+  ],
+  "cases": [
+    {"id":"q1","split":"development","query":"怎样避免嵌套命令把字符串弄坏？","relevance":{"shell":3}},
+    {"id":"q2","split":"development","query":"卖出基金时手续费如何按持仓时间算？","relevance":{"fees":3}},
+    {"id":"q3","split":"development","query":"新记录与以前的结论不同，怎么处理？","relevance":{"evidence":3}},
+    {"id":"q4","split":"development","query":"用户只说了一次喜欢某个方案，要一直遵守吗？","relevance":{"privacy":3}},
+    {"id":"q5","split":"development","query":"刚有新的记录还没归档，可以相信原来的摘要吗？","relevance":{"stale":3}},
+    {"id":"q6","split":"development","query":"代码改了但应用还是旧行为，应该检查哪里？","relevance":{"runtime":3}},
+    {"id":"q7","split":"review-pending","query":"查这个项目时能顺便带其他工程的内容吗？","relevance":{"scope":3}},
+    {"id":"q8","split":"review-pending","query":"三个助手都复述同一句话，可以认为三个独立来源吗？","relevance":{"origin":3}},
+    {"id":"q9","split":"review-pending","query":"总结任务超时了，原始记录还能保存成功吗？","relevance":{"rollback":3}},
+    {"id":"q10","split":"review-pending","query":"笔记中的个人补充会不会被刷新删掉？","relevance":{"manual":3}},
+    {"id":"q11","split":"review-pending","query":"更换嵌入模型之后能沿用之前的向量吗？","relevance":{"index":3}},
+    {"id":"q12","split":"review-pending","query":"本地推理服务挂了检索是否还能继续？","relevance":{"local":3,"rollback":1}},
+    {"id":"q13","split":"review-pending","query":"明天北京天气如何？","relevance":{}}
+  ]
+}

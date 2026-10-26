@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-26
+
 ### Added
 
 - **A runtime directory can be rebuilt from the artifact instead of copied by hand.** A host runs
@@ -666,5 +668,6 @@ and every projection is rebuilt from the event journal.
   must never be written to memory in the first place.
 - The web console binds to loopback only and has no authentication by design.
 
-[Unreleased]: https://github.com/RueDragon/memkeel/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/RueDragon/memkeel/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/RueDragon/memkeel/releases/tag/v1.0.1
 [1.0.0]: https://github.com/RueDragon/memkeel/releases/tag/v1.0.0

@@ -77,9 +77,13 @@ test('workspace transport failure stays pending, is reported and can retry witho
   const { config, transport, project, call } = fixture(t); const cwd = project('retry');
   processHook(config, 'claude', call(cwd, 'retry', 'UserPromptSubmit', { prompt: 'OneScreen lookup' }));
   processHook(config, 'claude', call(cwd, 'retry', 'Stop', { last_assistant_message: 'Lookup reply' }));
-  assert.equal(drainCheckpoints(config, { ...transport, create() { throw new Error('CLI offline'); } }).errors.length, 1);
+  const first = drainCheckpoints(config, { ...transport, create() { const error = new Error('CLI offline'); error.retryable = true; throw error; } }, { now: 1000000 });
+  assert.equal(first.errors.length, 1);
   assert.match(checkpointHealth(config).pending[0].error, /CLI offline/); assert.equal(loadEvents(config).length, 0);
-  assert.equal(drainCheckpoints(config, transport).processed, 1); assert.equal(drainCheckpoints(config, transport).processed, 0);
+  const beforeDue = drainCheckpoints(config, transport, { now: 1000001 });
+  assert.equal(beforeDue.processed, 0);
+  const retryNow = 1000000 + 2000;
+  assert.equal(drainCheckpoints(config, transport, { now: retryNow }).processed, 1); assert.equal(drainCheckpoints(config, transport, { now: retryNow }).processed, 0);
   assert.equal(checkpointHealth(config, loadEvents(config)).healthy, true);
 });
 test('finished but silently unqueued session fails health even when event pending is zero', (t) => {

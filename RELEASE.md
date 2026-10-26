@@ -60,10 +60,9 @@ now catches it.
 - The schema of `config.json` is versioned separately (`configSchema`), deliberately. A release number
   is never rewritten into a schema number, so a migration can be described without inventing a
   `1.0.0 -> 1` mapping.
-- Which number to use is a maintainer decision, not a script's. The plan's suggestion, recorded here
-  because it is sound: patch releases for security and maintenance fixes, a minor release for new
-  configuration or migration features. **This repository is at 1.0.0 and this file does not decide what
-  comes next.**
+- Which number to use is a maintainer decision, not a script's. Patch releases carry maintenance and
+  reliability fixes; minor releases are for new configuration or migration features. **This repository
+  is releasing 1.0.1.**
 
 ## Pre-release checklist
 
