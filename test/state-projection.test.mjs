@@ -24,6 +24,19 @@ test('state projection uses occurred_at for activity and recorded_at for ingesti
   assert.equal(result.stable_knowledge[0].recorded_at, '2026-10-26T10:00:00.000Z');
 });
 
+test('Date-valued now preserves millisecond boundary for same-instant activity', () => {
+  const exact = new Date('2026-10-27T12:00:00.625Z');
+  const result = projectState({
+    now: exact,
+    events: [event('same-ms', exact.toISOString(), '2026-10-27T12:00:00.625Z', {
+      contexts: [{ id: 'same-ms-task', task: 'Same millisecond task', text: 'Still active', certainty: 'reported' }],
+    })],
+  });
+  assert.equal(result.window.to, exact.toISOString());
+  assert.equal(result.recent_projects[0].workspace, 'demo');
+  assert.equal(result.current_tasks[0].task, 'Same millisecond task');
+});
+
 test('long-unupdated open actions are isolated from current tasks and are not closed', () => {
   const result = projectState({
     now,
