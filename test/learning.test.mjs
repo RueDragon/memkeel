@@ -79,7 +79,7 @@ test('native startup once, operation denial, reported checkpoint, idempotent rep
   const { root, config, transport, hook } = fixture(t);
   assert.match(JSON.stringify(processHook(config, 'codex', hook('SessionStart'))), /agent-memory-hook:bootstrap/);
   assert.deepEqual(processHook(config, 'codex', hook('SessionStart')), {});
-  processHook(config, 'codex', hook('UserPromptSubmit', { prompt: 'OPB dependency investigation' }));
+  processHook(config, 'codex', hook('UserPromptSubmit', { prompt: 'Please remember this OPB dependency investigation for the next task.' }));
   assert.equal(processHook(config, 'codex', hook('PreToolUse', { tool_name: 'exec_command', tool_input: { cmd: '$Host = 1' } })).hookSpecificOutput.permissionDecision, 'deny');
   processHook(config, 'codex', hook('Stop', { last_assistant_message: 'Local lookup pending verification.', occurredAt: now }), { occurredAt: now });
   assert.equal(maintain(config, transport).checkpoints.processed, 1);
@@ -98,7 +98,7 @@ test('no-record requests never enter checkpoint queue', (t) => {
 test('capturing an experience supports durable readback and context-free bootstrap', (t) => {
   const { config, transport, root } = fixture(t);
   const input = { ...entry, agent: 'codex', evidence: undefined, occurred_at: now };
-  capture(config, transport, input, 'Observed dependency file on the test fixture.');
+  capture(config, transport, input, 'Verified important search-route conclusion: the dependency file exists in the isolated fixture and should be checked before another broad search.');
   assert.equal(recallLearning(config, { cwd: root, query: 'opb' }).length, 1);
   assert.doesNotMatch(bootstrap(config, root, 'unrelated').text, /OPB jar in dependency directory/);
 });

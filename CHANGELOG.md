@@ -7,6 +7,34 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-28
+
+### Added
+
+- Unified task-start retrieval adapters for CLI, MCP and native hooks, with scoped short-term
+  context, explicit keyword fallback, bounded output and read-only semantic-index access.
+- Deterministic current-state summaries that distinguish recent activity, active tasks, recent
+  completion and stale open actions using occurrence time rather than ingestion time.
+- Shared visibility and collection-admission policies, plus a report-only governance view.
+  Historical events remain immutable; governance candidates do not apply retention decisions.
+- Explicit, bounded checkpoint recovery without bypassing collection or credential checks.
+
+### Fixed
+
+- Malformed topic aliases no longer crash all bootstrap queries. Configuration validation
+  identifies the field, preserves valid ledger identities and previews safe alias migrations.
+- Independent Git repositories are no longer swallowed by an overly broad parent workspace
+  route. Legacy workspace history stays available through an explicit workspace query.
+- Hidden, closed, superseded and dormant task content is excluded from default summaries;
+  explicit history reads retain audit access without making historical content current.
+
+### Release Scope
+
+- GitHub release only. This release does not publish an npm package, download embedding models,
+  rewrite historical event ownership or apply bulk historical-governance candidates.
+- Local semantic availability, host restart requirements and human-labelled retrieval-quality
+  evaluation must be reported separately from isolated test results.
+
 ## [1.0.1] - 2026-10-26
 
 ### Added
@@ -668,6 +696,7 @@ and every projection is rebuilt from the event journal.
   must never be written to memory in the first place.
 - The web console binds to loopback only and has no authentication by design.
 
-[Unreleased]: https://github.com/RueDragon/memkeel/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/RueDragon/memkeel/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/RueDragon/memkeel/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/RueDragon/memkeel/releases/tag/v1.0.1
 [1.0.0]: https://github.com/RueDragon/memkeel/releases/tag/v1.0.0

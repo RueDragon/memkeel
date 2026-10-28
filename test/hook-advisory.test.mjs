@@ -164,7 +164,7 @@ test('double Stop, PreCompact and memory-only replies retain one effective check
   const { config, project, call } = fixture(t);
   const cwd = project();
   const send = (event, extra = {}) => processHook(config, 'dsh', call(cwd, 'dedup', event, extra));
-  send('UserPromptSubmit', { prompt: 'fix the synthetic adapter', turn_id: 'turn-one' });
+  send('UserPromptSubmit', { prompt: 'Please remember this synthetic adapter investigation and verified repair.', turn_id: 'turn-one' });
   send('PreCompact', { last_assistant_message: 'Investigation identified the adapter boundary.' });
   drainCheckpoints(config, createTransport(config));
   const first = loadEvents(config)[0];
@@ -179,9 +179,9 @@ test('double Stop, PreCompact and memory-only replies retain one effective check
   assert.match(effective[0].text, /regression passed/);
   assert.equal(events[1].contexts[0].supersedes, first.event_id);
   assert.equal(events[1].contexts[0].certainty, 'reported');
-  send('UserPromptSubmit', { prompt: 'fix the synthetic adapter', turn_id: 'turn-one' });
+  send('UserPromptSubmit', { prompt: 'Please remember this synthetic adapter investigation and verified repair.', turn_id: 'turn-one' });
   assert.equal(stateOf(config, 'dsh', 'dedup').turn, 1, 'duplicate host prompt callback uses stable turn token');
-  send('UserPromptSubmit', { prompt: 'fix the synthetic adapter', turn_id: 'turn-two' });
+  send('UserPromptSubmit', { prompt: 'Please remember this synthetic adapter investigation and verified repair.', turn_id: 'turn-two' });
   send('Stop', { last_assistant_message: 'A separate user turn produced a different response.' });
   drainCheckpoints(config, createTransport(config));
   assert.equal(learningProjection(loadEvents(config)).entries.length, 2, 'identical real prompts remain distinct turns');

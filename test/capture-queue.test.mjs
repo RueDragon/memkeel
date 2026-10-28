@@ -70,6 +70,33 @@ test('invalid and secret captures have no registration, queue, plan or evidence 
   assert.deepEqual(tree(root), before);
 });
 
+test('async capture no-record and low-importance denials persist no payload or reservation', (t) => {
+  const { home, config, input, evidence } = fixture(t);
+  const queueRoot = path.join(home, 'state/capture-queue');
+  const noRecord = { ...input, noRecord: true };
+  assert.deepEqual(submitCapture(config, noRecord, evidence), { status: 'skipped', recorded: false, reason: 'no-record' });
+  const trivial = { event_id: 'queue-event-trivial', workspace: 'demo', topic: 'demo/reliability', agent: 'codex',
+    contexts: [{ id: 'turn-1', task: 'ok', text: 'thanks' }] };
+  assert.deepEqual(submitCapture(config, trivial, evidence), { status: 'skipped', recorded: false, reason: 'low-importance' });
+  assert.equal(fs.existsSync(queueRoot), false);
+  assert.equal(fs.existsSync(path.join(home, 'state', 'captures.json')), false);
+  assert.equal(fs.existsSync(path.join(home, 'state', 'capture-reservations.json')), false);
+});
+
+test('source and collection exclusions outrank explicit capture before persistence', (t) => {
+  const { home, config, input, evidence } = fixture(t);
+  for (const collection of [{ enabled: false }, { exclude: { sources: ['mcp'] } }]) {
+    const denied = { ...config, collection };
+    assert.deepEqual(submitCapture(denied, input, evidence, { explicit: true }),
+      { status: 'skipped', recorded: false, reason: 'collection-disabled' });
+    assert.deepEqual(capture(denied, createTransport(denied), input, evidence, { explicit: true }),
+      { status: 'skipped', recorded: false, reason: 'collection-disabled' });
+  }
+  assert.equal(fs.existsSync(path.join(home, 'state/capture-queue')), false);
+  assert.equal(fs.existsSync(path.join(home, 'state/capture-reservations.json')), false);
+  assert.equal(loadEvents(config).length, 0);
+});
+
 test('temporary failures persist backoff across fresh consumers and stop at a bounded attempt limit', (t) => {
   const { config, transport, input, evidence } = fixture(t);
   submitCapture(config, input, evidence);

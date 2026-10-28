@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { localDay, normalizeWorkspace, matchRoute, selectHabits, reduceEvents, validateEvent, record, consolidate, loadEvents, bootstrap, recall, refreshIndex } from '../lib/core.mjs';
+import { localDay, normalizeWorkspace, matchRoute, resolveRoute, resolveWorkspaceId, selectHabits, reduceEvents, validateEvent, record, consolidate, loadEvents, bootstrap, recall, refreshIndex } from '../lib/core.mjs';
 import { inside, withLock } from '../lib/transport.mjs';
 import { applyInjectionBudget } from '../vendor/obsidian-mind/session-start.ts';
 import { capture, decideHabit, maintain } from '../lib/lifecycle.mjs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { groupLegacySources } from '../lib/catalog.mjs';
+import { learningBody } from '../lib/experience.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lu-memory-test-'));
@@ -44,6 +45,34 @@ test('Windows, WSL and child directory route to same workspace', () => {
   assert.equal(matchRoute('C:/Code/SCM/src', routes).id, 'scm');
   assert.equal(matchRoute('D:/worktrees/scm-fix/src', routes).id, 'scm');
   assert.equal(matchRoute('C:/Code/SCM-other', routes), undefined);
+});
+test('an independent nested repository is not swallowed by a parent workspace route', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'memkeel-nested-git-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const parent = path.join(root, 'Code');
+  const child = path.join(parent, 'child-app');
+  fs.mkdirSync(child, { recursive: true });
+  assert.equal(spawnSync('git', ['init', parent], { encoding: 'utf8' }).status, 0);
+  assert.equal(spawnSync('git', ['init', child], { encoding: 'utf8' }).status, 0);
+  const routes = [{ id: 'code-wide', workspace: parent, aliases: [] }];
+  assert.equal(resolveRoute(child, routes), undefined);
+  assert.throws(() => resolveWorkspaceId(child, routes), /Unknown or ambiguous workspace/);
+  assert.equal(resolveWorkspaceId('code-wide', routes), 'code-wide');
+  routes.push({ id: 'child-app', workspace: child, aliases: [] });
+  assert.equal(resolveRoute(child, routes).id, 'child-app');
+  assert.equal(resolveWorkspaceId(child, routes), 'child-app');
+});
+test('default experience projection omits dormant and closed learning while history can include it', () => {
+  const events = [
+    { event_id: 'learning-old-001', workspace: 'scm', topic: 'scm/channel', occurred_at: '2026-01-01T00:00:00Z', evidence: ['work/inbox/evidence.md'],
+      contexts: [{ id: 'old-context', task: 'Old Task', text: 'Dormant sentinel', status: 'active', ttl_days: 7 }] },
+    { event_id: 'learning-closed-01', workspace: 'scm', topic: 'scm/channel', occurred_at: '2026-09-06T00:00:00Z', evidence: ['work/inbox/evidence.md'],
+      contexts: [{ id: 'closed-context', task: 'Closed Task', text: 'Closed sentinel', status: 'closed', ttl_days: 30 }] },
+  ];
+  const now = '2026-09-07T12:00:00+08:00';
+  assert.doesNotMatch(learningBody(events, now), /Dormant sentinel|Closed sentinel/);
+  assert.match(learningBody(events, now, { history: true }), /Dormant sentinel/);
+  assert.match(learningBody(events, now, { history: true }), /Closed sentinel/);
 });
 test('Shanghai calendar handles UTC midnight boundary', () => { assert.equal(localDay('2026-09-06T16:01:00Z'), '2026-09-07'); });
 test('temporary, candidate, expired and wrong-scope preferences do not activate', () => {
@@ -114,10 +143,12 @@ test('upstream mind budget keeps mandatory context and marks fallback sections',
     { header: '# Active projects', body: 'x'.repeat(5000), priority: 1, fallback: 'three projects and link' }], 200);
   assert.match(result.text, /required/); assert.match(result.text, /three projects/); assert.deepEqual(result.collapsed, ['Active projects']);
 });
-test('bootstrap includes activity and recent changes, repeated startup reuses index', (t) => {
+test('bootstrap does not promote an old imported event into recent activity', (t) => {
   const { config } = fixture(t);
+  config.now = '2026-10-07T12:00:00+08:00';
   const first = bootstrap(config, 'C:/Code/SCM', 'ChannelConfig'); refreshIndex(config); const second = bootstrap(config, 'C:/Code/SCM', 'ChannelConfig');
-  assert.match(first.text, /活动项目/); assert.match(first.text, /近期变化/); assert.match(first.text, /changed one thing/);
+  assert.match(first.text, /活动项目/); assert.match(first.text, /近期变化/); assert.match(first.text, /近 14 天没有已记录变化/);
+  assert.doesNotMatch(first.text, /changed one thing/);
   assert.ok(first.io.changed > 0); assert.equal(second.io.changed, 0);
 });
 test('canonical topic wins over historical claims; historical sources remain accessible', (t) => {
@@ -140,7 +171,7 @@ test('recent window excludes old imported events without hiding dated activity',
   const { config, transport, event } = fixture(t);
   record(config, transport, event); consolidate(config, transport);
   const result = bootstrap(config, 'C:/Code/SCM');
-  assert.match(result.text, /近期无新记录，不代表停工/);
+  assert.match(result.text, /没有可用活动记录/);
   assert.match(result.text, /近 14 天没有已记录变化/);
   assert.doesNotMatch(result.text.split('## 近期变化')[1], /Flexible width/);
   assert.equal(result.recentWindow.from, '2026-08-25');
@@ -182,14 +213,30 @@ test('startup groups same-topic events and displays each current fact and action
   consolidate(config, transport);
   const result = bootstrap(config, 'C:/Code/SCM', 'ChannelConfig');
   assert.match(result.text, /2 条相关事件/);
-  for (const text of ['Flexible width', 'Scoped error dialogs', 'Verify UI']) assert.equal(result.text.split(text).length - 1, 1);
+  for (const text of ['Flexible width', 'Scoped error dialogs', 'Verify UI']) assert.equal(result.text.split(text).length - 1, 1, `duplicate display: ${text}`);
   assert.doesNotMatch(result.text, /## 历史证据/);
   assert.match(bootstrap(config, 'C:/Code/SCM').text, /Flexible width/);
 });
+test('superseding one item does not hide other facts or actions in its original event', (t) => {
+  const { config, transport, event } = fixture(t);
+  config.recentDays = 60;
+  const original = { ...event, event_id: 'mixed-event-001', facts: [
+    { key: 'width', text: 'Old width' }, { key: 'stable-note', text: 'Independent fact remains' },
+  ] };
+  record(config, transport, original);
+  record(config, transport, { ...original, event_id: 'mixed-event-002', facts: [{ key: 'width', text: 'New width', supersedes: original.event_id }], actions: [] });
+  consolidate(config, transport);
+  const summary = bootstrap(config, 'C:/Code/SCM', 'ChannelConfig').text;
+  assert.doesNotMatch(summary, /Old width/);
+  assert.match(summary, /Independent fact remains/);
+  assert.match(summary, /Verify UI/);
+});
 test('bootstrap and recall require no writes even without a cache', (t) => {
   const { config } = fixture(t);
+  config.now = '2026-10-07T12:00:00+08:00';
   assert.deepEqual(fs.readdirSync(config.policyRoot), []);
-  assert.match(bootstrap(config, 'C:/Code/SCM').text, /changed one thing/);
+  assert.match(bootstrap(config, 'C:/Code/SCM').text, /近 14 天没有已记录变化/);
+  assert.doesNotMatch(bootstrap(config, 'C:/Code/SCM').text, /changed one thing/);
   assert.ok(recall(config, 'ChannelConfig', 'scm', true).length);
   assert.deepEqual(fs.readdirSync(config.policyRoot), []);
 });
@@ -238,14 +285,16 @@ test('explicit rebuild repairs missing consumed projection without deleting evid
   assert.equal(loadEvents(config).length, 1);
 });
 test('MCP protocol separates reads and writes and read-only bootstrap does not need cache writes', (t) => {
-  const { config } = fixture(t); fs.writeFileSync(path.join(config.policyRoot, 'config.json'), JSON.stringify(config));
+  const { root, config } = fixture(t);
+  fs.writeFileSync(path.join(config.vaultRoot, 'work/projects/workspace-scm.md'), `---\nworkspace: '${root.replaceAll('\\', '/')}'\nproject: SCM\nstatus: active\n---\n# SCM\n`);
+  fs.writeFileSync(path.join(config.policyRoot, 'config.json'), JSON.stringify(config));
   const messages = [
     { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test', version: '1' } } },
     { jsonrpc: '2.0', id: 2, method: 'tools/list' },
-    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'agent_memory_read', arguments: { action: 'bootstrap', cwd: 'C:/Code/SCM' } } },
+    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'agent_memory_read', arguments: { action: 'bootstrap', cwd: root } } },
     { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'agent_memory', arguments: { action: 'execute-shell', input: { command: 'not allowed' } } } },
     { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'agent_memory_read', arguments: { action: 'capture' } } },
-    { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'agent_memory_read', arguments: { action: 'bootstrap', workspace: 'C:/Code/SCM' } } },
+    { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'agent_memory_read', arguments: { action: 'bootstrap', workspace: root } } },
     { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'agent_memory_read', arguments: { action: 'bootstrap', workspace: 'SCM' } } }
   ];
   const result = spawnSync(process.execPath, [fileURLToPath(new URL('../mcp-server.mjs', import.meta.url))], { env: { ...process.env, MEMKEEL_HOME: config.policyRoot }, input: messages.map((value) => JSON.stringify(value)).join('\n') + '\n', encoding: 'utf8', windowsHide: true });
@@ -297,6 +346,24 @@ test('maintenance completes a capture interrupted after evidence append and befo
   assert.deepEqual(maintain(config, transport).recoveredCaptures, [event.event_id]);
   assert.equal(loadEvents(config).length, 1);
   assert.deepEqual(maintain(config, transport).recoveredCaptures, []);
+});
+
+test('maintenance does not report a collection-disabled capture recovery as completed', (t) => {
+  const { config, transport, event } = fixture(t);
+  const broken = { ...transport, append(relative, content) {
+    transport.append(relative, content);
+    if (relative.includes('/Evidence/')) throw new Error('Synthetic interruption after evidence append');
+  } };
+  const input = { ...event }; delete input.evidence;
+  assert.throws(() => capture(config, broken, input, 'Synthetic verified recovery evidence.'), /Synthetic interruption/);
+  const off = { ...config, collection: { enabled: false } };
+  const result = maintain(off, transport);
+  assert.equal(result.healthy, false);
+  assert.deepEqual(result.recoveredCaptures, []);
+  assert.equal(result.captureErrors.length, 1);
+  assert.equal(result.captureErrors[0].event_id, event.event_id);
+  assert.match(result.captureErrors[0].error, /Capture recovery held: collection-disabled/);
+  assert.equal(loadEvents(off).length, 0);
 });
 test('a cached index refresh does not rewrite the index, and any real change still does', (t) => {
   const { config } = fixture(t);

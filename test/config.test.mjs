@@ -13,7 +13,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  CONFIG_SCHEMA_VERSION, applyConfigMigration, effectiveConfigView, inspectConfigGroups, loadConfig,
+  CONFIG_SCHEMA_VERSION, applyConfigMigration, effectiveConfigView, inspectConfigGroups, inspectTopics, loadConfig,
   planConfigMigration, resolveHome, validateConfig,
 } from '../lib/config.mjs';
 import { settingsSnapshot } from '../lib/dashboard-data.mjs';
@@ -120,6 +120,52 @@ test('a complete document validates', (t) => {
   assert.equal(report.ok, true, JSON.stringify(report.issues));
   assert.deepEqual(report.issues, []);
 });
+
+test('topic validation requires explicit id/title and string aliases', () => {
+  const report = inspectTopics([
+    { id: 'demo/ok', title: 'Okay', aliases: ['one', ' two '] },
+    { id: 'demo/bad-id', title: 'Bad', aliases: [['nested']] },
+    { id: 12, title: 'No id', aliases: ['x'] },
+    { id: 'demo/no-title', title: '', aliases: [] },
+  ]);
+  assert.equal(report.topics.length, 2);
+  assert.deepEqual(report.topics[0].aliases, ['one', 'two']);
+  assert.deepEqual(report.topics[1].aliases, []);
+  assert.equal(report.degraded, true);
+  assert.ok(report.issues.some((issue) => issue.field === 'topics[1].aliases'));
+  assert.ok(report.issues.some((issue) => issue.field === 'topics[2].id'));
+  assert.ok(report.issues.some((issue) => issue.field === 'topics[3].title'));
+  assert.ok(report.issues.every((issue) => issue.status === 'quarantined' && issue.degraded === true));
+});
+
+test('malformed topics are quarantined when loading config, preserving a usable config', (t) => {
+  const { home, write, complete } = fixture(t);
+  write(complete({ topics: [{ id: 'demo/good', title: 'Good' }, { id: 'demo/bad', title: 'Bad', aliases: [['broken']] }] }));
+  const loaded = loadConfig(home);
+  assert.deepEqual(loaded.config.topics.map((topic) => topic.id), ['demo/good', 'demo/bad']);
+  assert.deepEqual(loaded.config.topics.find((topic) => topic.id === 'demo/bad').aliases, []);
+  assert.equal(loaded.config.topicHealth.degraded, true);
+  assert.equal(loaded.config.topicHealth.quarantined[0].field, 'topics[1]');
+});
+
+test('nested aliases produce an explicit migration preview only when unambiguous', (t) => {
+  const { complete } = fixture(t);
+  const plan = planConfigMigration(complete({ topics: [{ id: 'demo/topic', title: 'Topic', aliases: [['one'], ['two']] }] }));
+  assert.deepEqual(plan.next.topics[0].aliases, ['one', 'two']);
+  assert.ok(plan.changes.some((change) => change.kind === 'normalize-topic-aliases' && change.field === 'topics[0].aliases'));
+  const ambiguous = planConfigMigration(complete({ topics: [{ id: 'demo/topic', title: 'Topic', aliases: [['one'], [4]] }] }));
+  assert.deepEqual(ambiguous.next.topics[0].aliases, [['one'], [4]]);
+  assert.ok(!ambiguous.changes.some((change) => change.kind === 'normalize-topic-aliases'));
+});
+
+test('config validation reports topic field paths and refuses malformed topic writes', (t) => {
+  const { complete } = fixture(t);
+  const report = validateConfig(complete({ topics: [{ id: 'bad', title: 'Missing workspace', aliases: ['ok'] }, { id: 'demo/good', title: 'Good', aliases: [7] }] }));
+  assert.equal(report.ok, false);
+  assert.ok(report.issues.some((issue) => issue.field === 'topics[0].id'));
+  assert.ok(report.issues.some((issue) => issue.field === 'topics[1].aliases'));
+});
+
 
 const INVALID = [
   ['an unknown layout', { layout: 'not-a-layout' }, /布局只能是/],

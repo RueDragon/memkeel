@@ -62,7 +62,7 @@ function walk(dir) {
 
 /** Run one ordinary turn through the hook: prompt, a tool call, then Stop. */
 function turn(config, f, cwd, session, marker) {
-  processHook(config, 'claude', f.call(cwd, session, 'UserPromptSubmit', { prompt: `please inspect ${marker}` }));
+  processHook(config, 'claude', f.call(cwd, session, 'UserPromptSubmit', { prompt: `please remember this and inspect ${marker}` }));
   processHook(config, 'claude', f.call(cwd, session, 'PostToolUse', { tool_name: 'Read', tool_input: {}, tool_response: {} }));
   processHook(config, 'claude', f.call(cwd, session, 'Stop', { last_assistant_message: `the reply also mentions ${marker}` }));
 }

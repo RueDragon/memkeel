@@ -37,7 +37,7 @@ for (const host of ['claude', 'codex', 'zcode', 'dsh']) test(host + ': unknown p
   assert.equal(loadRoutes(config).length, 0);
   assert.equal(fs.readFileSync(path.join(config.policyRoot, 'config.json'), 'utf8'), before);
   assert.equal(fs.existsSync(path.join(config.policyRoot, 'state')), false);
-  processHook(config, host, call(cwd, session, 'UserPromptSubmit', { prompt: 'OneScreen adapter investigation' }));
+  processHook(config, host, call(cwd, session, 'UserPromptSubmit', { prompt: 'Please remember this OneScreen adapter investigation and mount contract.' }));
   processHook(config, host, call(cwd, session, 'Stop', { last_assistant_message: 'AgentEntry mount contract is required; reported only.' }));
   assert.equal(checkpointHealth(config).pending.length, 1);
   assert.equal(drainCheckpoints(config, transport).processed, 1);
@@ -75,7 +75,7 @@ test('unknown project with no-record request creates neither route nor checkpoin
 });
 test('workspace transport failure stays pending, is reported and can retry without duplication', (t) => {
   const { config, transport, project, call } = fixture(t); const cwd = project('retry');
-  processHook(config, 'claude', call(cwd, 'retry', 'UserPromptSubmit', { prompt: 'OneScreen lookup' }));
+  processHook(config, 'claude', call(cwd, 'retry', 'UserPromptSubmit', { prompt: 'Please remember this adapter investigation for retry coverage.' }));
   processHook(config, 'claude', call(cwd, 'retry', 'Stop', { last_assistant_message: 'Lookup reply' }));
   const first = drainCheckpoints(config, { ...transport, create() { const error = new Error('CLI offline'); error.retryable = true; throw error; } }, { now: 1000000 });
   assert.equal(first.errors.length, 1);
@@ -94,7 +94,7 @@ test('finished but silently unqueued session fails health even when event pendin
 
 test('SessionEnd without reply cannot replace the richer Stop checkpoint', (t) => {
   const { config, transport, project, call } = fixture(t); const cwd = project('end');
-  processHook(config, 'claude', call(cwd, 'end', 'UserPromptSubmit', { prompt: 'OneScreen adapter' }));
+  processHook(config, 'claude', call(cwd, 'end', 'UserPromptSubmit', { prompt: 'Please remember this OneScreen adapter integration contract investigation.' }));
   processHook(config, 'claude', call(cwd, 'end', 'PostToolUse', { tool_name: 'Read' }));
   processHook(config, 'claude', call(cwd, 'end', 'Stop', { last_assistant_message: 'Preserve mount contract answer.' }));
   assert.equal(drainCheckpoints(config, transport).processed, 1);
@@ -110,7 +110,30 @@ test('SessionEnd without reply cannot replace the richer Stop checkpoint', (t) =
 
 test('recovered checkpoint preserves original occurrence time rather than repair time', (t) => {
   const { config, transport, project, call } = fixture(t); const cwd = project('recovery'); const occurredAt = '2026-09-08T07:55:32.675Z';
-  processHook(config, 'claude', call(cwd, 'recovery', 'UserPromptSubmit', { prompt: 'OneScreen lookup' }));
+  processHook(config, 'claude', call(cwd, 'recovery', 'UserPromptSubmit', { prompt: 'Please remember this OneScreen adapter contract verification.' }));
   processHook(config, 'claude', call(cwd, 'recovery', 'Stop', { last_assistant_message: 'Original reply' }), { occurredAt });
   assert.equal(drainCheckpoints(config, transport).processed, 1); assert.equal(loadEvents(config)[0].occurred_at, occurredAt);
+});
+
+test('skipped admission is healthy while a genuinely lost checkpoint still fails diagnostics', (t) => {
+  const { config, project, call } = fixture(t);
+  const cwd = project('low-importance');
+  processHook(config, 'claude', call(cwd, 'skipped', 'UserPromptSubmit', { prompt: 'ok' }));
+  processHook(config, 'claude', call(cwd, 'skipped', 'PostToolUse', { tool_name: 'Read' }));
+  processHook(config, 'claude', call(cwd, 'skipped', 'Stop', { last_assistant_message: 'thanks' }));
+  assert.equal(checkpointHealth(config, []).healthy, true);
+  const queue = path.join(config.policyRoot, 'state/hook-queue');
+  fs.mkdirSync(queue, { recursive: true });
+  fs.writeFileSync(path.join(queue, 'skipped-row.json'), JSON.stringify({ id: 'skipped-row', status: 'skipped', reason: 'low-importance' }));
+  const health = checkpointHealth(config, []);
+  assert.equal(health.healthy, true);
+  assert.equal(health.skipped.length, 1);
+  assert.equal(health.skipped[0].reason, 'low-importance');
+  assert.deepEqual(health.invalid, []);
+  assert.deepEqual(health.unqueued, []);
+  const lost = path.join(config.policyRoot, 'state/hook-sessions/lost');
+  fs.mkdirSync(lost);
+  fs.writeFileSync(path.join(lost, 'session.json'), JSON.stringify({ lastStop: true, prompt: 'Important task', tools: 1, turn: 1 }));
+  assert.equal(checkpointHealth(config, []).healthy, false);
+  assert.equal(checkpointHealth(config, []).unqueued.length, 1);
 });

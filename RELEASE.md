@@ -62,7 +62,7 @@ now catches it.
   `1.0.0 -> 1` mapping.
 - Which number to use is a maintainer decision, not a script's. Patch releases carry maintenance and
   reliability fixes; minor releases are for new configuration or migration features. **This repository
-  is releasing 1.0.1.**
+  is releasing 1.1.0.**
 
 ## Pre-release checklist
 

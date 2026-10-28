@@ -83,11 +83,11 @@ anything to use it either.
 
 ### As an npm package (not published yet)
 
-The package is prepared for npm, but v1.0.1 ships from GitHub and the npm release is planned
-for v1.1. Until then, install from a clone.
+The package is prepared for npm, but v1.1.0 ships from GitHub only. An npm release is
+not scheduled yet. Until then, install from a clone.
 
 ```bash
-npm install -g memkeel   # available from v1.1
+npm install -g memkeel   # future npm release, not published yet
 memkeel help
 ```
 

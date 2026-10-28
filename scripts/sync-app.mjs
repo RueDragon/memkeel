@@ -27,12 +27,13 @@ import { inspectPackage } from './release-check.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PACKAGE_NAME = 'memkeel';
 const USAGE = [
-  'Usage: node scripts/sync-app.mjs --into DIR [--check] [--from TARBALL] [--force]',
+  'Usage: node scripts/sync-app.mjs --into DIR [--check] [--from TARBALL] [--force] [--keep-rollbacks]',
   '',
   '  --into DIR      the runtime directory to rebuild (or MEMKEEL_APP_DIR)',
   '  --check         report drift against the artifact; writes nothing, exits 1 on drift',
   '  --from TARBALL  sync from an existing .tgz instead of packing the checkout',
   '  --force         replace a target that is not an existing memkeel copy',
+  '  --keep-rollbacks preserve all prior runtime rollback directories',
 ].join('\n');
 
 /** Sorted POSIX-relative paths of every file under a directory. */
@@ -118,13 +119,14 @@ export function buildArtifact({ from } = {}) {
 }
 
 function parseArgs(argv) {
-  const options = { into: process.env.MEMKEEL_APP_DIR ?? null, check: false, from: null, force: false };
+  const options = { into: process.env.MEMKEEL_APP_DIR ?? null, check: false, from: null, force: false, keepRollbacks: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--into') options.into = argv[index += 1];
     else if (arg === '--from') options.from = argv[index += 1];
     else if (arg === '--check') options.check = true;
     else if (arg === '--force') options.force = true;
+    else if (arg === '--keep-rollbacks') options.keepRollbacks = true;
     else if (arg === '--help' || arg === '-h') { console.log(USAGE); return null; }
     else throw new Error(`unknown argument: ${arg}\n${USAGE}`);
   }
@@ -247,7 +249,9 @@ function main() {
 
     // One rollback is the point; a growing pile of them is just disk. Only directories this
     // script named and that hold a memkeel package are removed.
-    for (const stale of rollbackSiblings(target).slice(0, -1)) fs.rmSync(stale.full, { recursive: true, force: true });
+    if (!options.keepRollbacks) {
+      for (const stale of rollbackSiblings(target).slice(0, -1)) fs.rmSync(stale.full, { recursive: true, force: true });
+    }
 
     console.log(`wrote: ${target} (${written.identical} file(s) from ${artifact.filename})`);
     if (existed) console.log(`rollback: ${rollback}`);

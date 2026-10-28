@@ -23,7 +23,7 @@ function fixture(t) {
   config.topics = [{ id: 'demo/reliability', workspace: 'demo', title: 'Reliability', aliases: [], path: 'topics/demo.md' }];
   atomicJson(path.join(home, 'config.json'), config);
   const input = { event_id: 'projection-event-0001', workspace: 'demo', topic: 'demo/reliability', agent: 'codex',
-    contexts: [{ id: 'worker-task', task: 'Synthetic task', text: 'Synthetic reported reply.', certainty: 'reported', ttl_days: 30 }] };
+    contexts: [{ id: 'worker-task', task: 'Synthetic task', text: 'Important conclusion: the worker must retry transient projection failures because the journal is already recorded.', certainty: 'reported', ttl_days: 30 }] };
   return { home, config, input, evidence: 'Synthetic isolated verification only.' };
 }
 
@@ -69,7 +69,8 @@ test('checkpoint projection retry survives interruption and a fresh worker respe
   const attempts = [];
   const rowFile = path.join(home, 'state/hook-queue', input.event_id + '.json');
   atomicJson(rowFile, { id: input.event_id, at: new Date(start).toISOString(), status: 'pending',
-    host: 'codex', workspace: 'demo', cwd: home, capture: { event: input, evidence_text: evidence } });
+    host: 'codex', workspace: 'demo', cwd: home, task: input.contexts[0].task, context: input.contexts[0].text,
+    capture: { event: input, evidence_text: evidence } });
   const transportFactory = (current) => failingProjection(current, (relative) => {
     if (relative !== 'topics/demo.md') return;
     attempts.push(at);

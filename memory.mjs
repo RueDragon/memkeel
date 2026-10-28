@@ -23,6 +23,7 @@ import { initStore } from './lib/init.mjs';
 import { planCodexBackfill, applyCodexBackfill } from './lib/ingest/backfill.mjs';
 import { startServer } from './dashboard.mjs';
 import { errorText, makeTranslator, renderMessages } from './lib/messages.mjs';
+import { retrieveForTask, appendTaskRetrieval, buildCurrentGovernanceReport } from './lib/task-retrieval.mjs';
 
 // Every string this CLI prints for a person comes from lib/messages.mjs, so a single locale governs
 // the whole surface; that file explains why it is a separate catalogue from the dashboard's.
@@ -47,6 +48,7 @@ if (options.home === true) throw new Error(t('cli.error.homeNeedsDirectory'));
 const { home: policyRoot, source: homeSource } = resolveHome({ home: typeof options.home === 'string' ? options.home : '' });
 const configPath = path.join(policyRoot, 'config.json');
 if (command === 'help') {
+  console.log('task-recall --query TEXT --workspace ID  (read-only task-start retrieval)\ngovernance-report [--history]  (read-only candidate inventory; applies no decisions)');
   console.log('Capture delivery: CLI capture waits by default; add --async for durable queued receipt.\ncapture-status [--id EVENT_ID]  (read-only receipt query)\ncapture-drain  (resume eligible queued/recorded items; respects backoff)\ncapture-retry --id EVENT_ID  (explicitly reset a validated receipt after repairing its cause)\nMCP capture queues by default; wait:true opts into synchronous completion. queued != recorded != ready; needs_attention is not a success claim.');
   console.log(`Agent Memory ${VERSION}\nbootstrap --cwd PATH --query TEXT [--workspace ID] [--json] [--all] [--audit]\nrecall --query TEXT [--workspace ID|NAME|PATH] [--history]\nworkspace-add --cwd DIR  (register the project at DIR as a workspace so it can hold topics and events)\nregister --topic WORKSPACE/KEY --workspace ID --title TEXT [--alias TEXT]\nrecord --file EVENT.json | record --stdin\ncapture --file INPUT.json | capture --stdin  (input: {event, evidence_text})\nhabit-decide --file INPUT.json | habit-decide --stdin\nconsolidate  (pending means remaining; pendingBefore means starting backlog)
 retain --candidates [--since ISO] [--limit N]  (read-only: automatic checkpoints still undecided)
@@ -245,7 +247,20 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
     let result;
     if (command === 'bootstrap') {
       result = bootstrap({ ...config, persistBootstrapAudit: Boolean(options.audit), ...(options.all ? { activeLimit: 20, recentLimit: 12 } : {}) }, options.cwd ?? process.cwd(), options.query ?? '', options.workspace);
+      if (options.query?.trim()) {
+        result.taskRetrieval = await retrieveForTask(config, { workspace: options.workspace, cwd: options.cwd ?? process.cwd(), query: options.query });
+        result.text = appendTaskRetrieval(result.text, result.taskRetrieval, config.budgetBytes);
+      } else {
+        result.taskRetrieval = { executed: false, reason: 'task-query-not-provided' };
+        result.text = appendTaskRetrieval(result.text, result.taskRetrieval, config.budgetBytes);
+      }
       console.log(options.json ? JSON.stringify(result, null, 2) : result.text);
+    } else if (command === 'task-recall') {
+      result = await retrieveForTask(config, { workspace: options.workspace, cwd: options.cwd, query: options.query ?? '', history: Boolean(options.history) });
+      console.log(JSON.stringify(result, null, 2));
+    } else if (command === 'governance-report') {
+      result = buildCurrentGovernanceReport(config, { history: Boolean(options.history) });
+      console.log(JSON.stringify(result, null, 2));
     } else if (command === 'recall') {
       result = recall(config, options.query ?? '', options.workspace, Boolean(options.history));
       console.log(JSON.stringify(result, null, 2));
@@ -258,8 +273,9 @@ retain  (print the current retention ledger)\nmaintenance [--rebuild]  (recover 
       if (!options.file && !options.stdin) throw new Error(t('cli.error.supplyFileOrStdin'));
       const input = JSON.parse(fs.readFileSync(options.stdin ? 0 : options.file, 'utf8').replace(/^\uFEFF/, ''));
       if (command === 'capture') {
-        result = options.async ? submitCapture(config, input.event ?? input.input, input.evidence_text) : capture(config, transport, input.event ?? input.input, input.evidence_text);
-        if (options.async) startCheckpointWorker(policyRoot);
+        const admission = { explicit: options.explicit === true };
+        result = options.async ? submitCapture(config, input.event ?? input.input, input.evidence_text, admission) : capture(config, transport, input.event ?? input.input, input.evidence_text, admission);
+        if (options.async && result.status === 'queued') startCheckpointWorker(policyRoot);
       }
       else if (command === 'habit-decide') result = decideHabit(config, transport, input);
       else result = { ...record(config, transport, input), consolidation: consolidate(config, transport) };

@@ -10,6 +10,7 @@ import { recallLearning, checkOperation } from './lib/core.mjs';
 import { loadConfig, resolveHome } from './lib/config.mjs';
 import { submitCapture, captureStatus } from './lib/capture-queue.mjs';
 import { startCheckpointWorker } from './lib/checkpoint-worker.mjs';
+import { retrieveForTask, appendTaskRetrieval, buildCurrentGovernanceReport } from './lib/task-retrieval.mjs';
 
 // Home precedence is shared with the CLI and the hook runner: an explicit --home wins over
 // MEMKEEL_HOME, which wins over the per-user default.
@@ -19,15 +20,16 @@ const { home: root } = resolveHome({ home: homeArg >= 0 ? process.argv[homeArg +
 const tool = { name: 'agent_memory', description: `Shared Markdown memory only. Read with agent_memory_read. At meaningful stage boundaries, capture important explicit decisions, verified corrections/completed stages, or an explicit user request to remember. Ordinary searches, path exploration and tool failures do not require capture. Example: { action: "capture", input: { event_id: "20260909-zcode-example-01", workspace: "my-project", topic: "my-project/service-profile", agent: "zcode", facts: [{ key: "verified-point", text: "A short verified conclusion." }] }, evidence_text: "Actual checked evidence." }. Capture validates then durably queues by default. queued means queue only; recorded means ledger exists but projections pending; ready means completed; needs_attention requires inspection. Query read-only status with receipt_id. wait:true opts into synchronous completion. New workspace/key topics in registered workspaces can be registered after validation; explicit register requires input.id, workspace and title. JSON-string capture input and embedded evidence_text are accepted. Never claim a queue receipt is an archive. Filesystem storage needs no Obsidian; strict obsidian-cli never automatically falls back. No arbitrary filesystem/shell access. habit_decide requires explicit user quote evidence. Use help for the full contract.`,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   inputSchema: { type: 'object', additionalProperties: false, required: ['action'], properties: {
-    action: { type: 'string', enum: ['help', 'status', 'bootstrap', 'recall', 'knowledge_recall', 'knowledge_inspect', 'experience_recall', 'context_recall', 'check_operation', 'capture', 'record', 'consolidate', 'maintenance', 'register', 'habit_decide'] },
+    action: { type: 'string', enum: ['help', 'status', 'bootstrap', 'recall', 'task_recall', 'governance_report', 'knowledge_recall', 'knowledge_inspect', 'experience_recall', 'context_recall', 'check_operation', 'capture', 'record', 'consolidate', 'maintenance', 'register', 'habit_decide'] },
     operation: { type: 'object' }, task: { type: 'string' },
     cwd: { type: 'string' }, query: { type: 'string' }, workspace: { type: 'string' }, history: { type: 'boolean' },
     input: { anyOf: [{ type: 'object' }, { type: 'string' }], description: 'Capture accepts an event object (preferred) or JSON-encoded object, with optional embedded evidence_text. For register: id (workspace/key), workspace, title and optional alias.' },
     wait: { type: 'boolean', description: 'Capture only: true explicitly waits for synchronous recording and consolidation; default false durably queues and returns a receipt, not an archive claim.' },
+    explicit: { type: 'boolean', description: 'Capture only: true only when the user explicitly asked to remember this content; does not override collection-disabled or no-record.' },
     receipt_id: { type: 'string', description: 'For status: event_id of a capture receipt.' },
     evidence_text: { type: 'string', description: 'For capture: actual observations, plain Markdown without fences or HTML comments; no secrets or raw logs.' }
   } } };
-const readActions = ['help', 'status', 'bootstrap', 'recall', 'knowledge_recall', 'knowledge_inspect', 'experience_recall', 'context_recall', 'check_operation'];
+const readActions = ['help', 'status', 'bootstrap', 'recall', 'task_recall', 'governance_report', 'knowledge_recall', 'knowledge_inspect', 'experience_recall', 'context_recall', 'check_operation'];
 // A workspace identity is a path in the *store's* convention, which need not match the
 // platform this process runs on: a store created on Windows can be read from Linux or WSL,
 // and normalizeWorkspace already treats `C:/x` and `C:\x` as the same identity. So accept any
@@ -42,7 +44,7 @@ const readTool = { ...tool, name: 'agent_memory_read', description: 'Read-only s
     cwd: { type: 'string', description: 'Required for bootstrap: the actual absolute working directory, not the MCP server directory.' }, query: { type: 'string' },
     workspace: { type: 'string', description: 'Recall scope: workspace ID, display name or absolute path. For bootstrap, an absolute path here is accepted as a cwd alias; a display name alone is not enough.' }, history: { type: 'boolean' },
     receipt_id: { type: 'string', description: 'For status: event_id of a capture receipt; reading does not start or retry work.' } } } };
-function dispatch(args) {
+async function dispatch(args) {
   const { config } = loadConfig(root);
   const transport = createTransport(config);
   switch (args.action) {
@@ -51,9 +53,15 @@ function dispatch(args) {
     case 'bootstrap': {
       const cwd = args.cwd ?? (absoluteWorkspace(args.workspace) ? args.workspace : undefined);
       if (!cwd || !absoluteWorkspace(cwd)) throw new Error('Actual absolute workspace cwd is required; do not infer it from the MCP server process');
-      return bootstrap(config, cwd, args.query ?? '', args.workspace).text;
+      const result = bootstrap(config, cwd, args.query ?? '', args.workspace);
+      if (!args.query?.trim()) return appendTaskRetrieval(result.text, { executed: false, reason: 'task-query-not-provided' }, config.budgetBytes);
+      const retrieval = await retrieveForTask(config, { workspace: args.workspace, cwd, query: args.query });
+      return appendTaskRetrieval(result.text, retrieval, config.budgetBytes);
     }
     case 'recall': return recall(config, args.query ?? '', args.workspace, args.history ?? false);
+    case 'task_recall': return retrieveForTask(config, { workspace: args.workspace, cwd: args.cwd,
+      query: args.query ?? args.task ?? '', history: args.history ?? false });
+    case 'governance_report': return buildCurrentGovernanceReport(config, { history: args.history ?? false });
     case 'knowledge_recall':
     case 'knowledge_inspect': {
       if (!args.workspace || !config.topics.some((t) => t.workspace === args.workspace)) throw new Error('Explicit registered workspace ID required');
@@ -70,9 +78,10 @@ function dispatch(args) {
     case 'context_recall': return recallLearning(config, { ...args, type: 'contexts' });
     case 'check_operation': return checkOperation(config, args);
     case 'capture': {
-      if (args.wait === true) return capture(config, transport, args.input, args.evidence_text);
-      const queued = submitCapture(config, args.input, args.evidence_text);
-      startCheckpointWorker(root);
+      const options = { explicit: args.explicit === true };
+      if (args.wait === true) return capture(config, transport, args.input, args.evidence_text, options);
+      const queued = submitCapture(config, args.input, args.evidence_text, options);
+      if (queued.status === 'queued') startCheckpointWorker(root);
       return queued;
     }
     case 'record': return { ...record(config, transport, args.input), consolidation: consolidate(config, transport) };
@@ -97,7 +106,7 @@ for await (const line of input) {
     else if (message.method === 'tools/call' && [tool.name, readTool.name].includes(message.params?.name)) {
       try {
         if (message.params.name === readTool.name && !readActions.includes(message.params.arguments?.action)) throw new Error('Read-only tool cannot perform writes');
-        const result = dispatch(message.params.arguments ?? {}); respond(message.id, { content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result, null, 2) }] }); }
+        const result = await dispatch(message.params.arguments ?? {}); respond(message.id, { content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result, null, 2) }] }); }
       catch (error) { respond(message.id, { isError: true, content: [{ type: 'text', text: error.message }] }); }
     } else process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } })}\n`);
   } catch (error) { if (message?.id !== undefined) process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32600, message: error.message } })}\n`); }

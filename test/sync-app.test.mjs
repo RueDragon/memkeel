@@ -137,6 +137,18 @@ test('--check fails on drift and names the file that drifted', () => {
   assert.equal(fs.readFileSync(path.join(target, 'lib', 'core.mjs'), 'utf8'), 'x');
 });
 
+test('keep-rollbacks preserves every previous runtime copy', () => {
+  const target = path.join(temp, 'preserved-runtime');
+  assert.equal(run(['--into', target, '--from', tarball, '--keep-rollbacks']).status, 0);
+  assert.equal(run(['--into', target, '--from', tarball, '--keep-rollbacks']).status, 0);
+  const first = rollbacks(target);
+  assert.equal(first.length, 1);
+  assert.equal(run(['--into', target, '--from', tarball, '--keep-rollbacks']).status, 0);
+  const all = rollbacks(target);
+  assert.equal(all.length, 2);
+  assert.ok(all.includes(first[0]));
+});
+
 test('a second sync repairs drift, keeps the drifted copy and prunes older rollbacks', () => {
   const target = path.join(temp, 'app');
   const result = run(['--into', target, '--from', tarball]);

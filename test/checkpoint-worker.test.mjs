@@ -47,7 +47,7 @@ test('real Stop recovers a dead session lock without changing session identity',
     const sessionRoot = path.join(root, 'state/hook-sessions', key);
     fs.mkdirSync(sessionRoot, { recursive: true });
     fs.writeFileSync(path.join(sessionRoot, 'writer.lock'), JSON.stringify({ pid: 2147483646, host: os.hostname() }));
-    fs.writeFileSync(path.join(sessionRoot, 'session.json'), JSON.stringify({ revision: 1, injected: [], counts: {}, observations: [], turn: 1, prompt: 'keep this task', tools: 1 }));
+    fs.writeFileSync(path.join(sessionRoot, 'session.json'), JSON.stringify({ revision: 1, injected: [], counts: {}, observations: [], turn: 1, prompt: 'Please remember this verified session lock recovery result.', tools: 1 }));
     const config = { policyRoot: root, vaultRoot: root, topics: [], workRoot: 'work', projectRoot: 'work/projects', eventsRoot: 'work/events', inboxRoot: 'work/inbox', habitsNote: 'work/habits.md' };
     processHook(config, 'codex', { hook_event_name: 'Stop', session_id: session, cwd: root, last_assistant_message: 'result' });
     const state = JSON.parse(fs.readFileSync(path.join(sessionRoot, 'session.json'), 'utf8'));
