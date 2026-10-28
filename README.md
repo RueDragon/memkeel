@@ -83,7 +83,7 @@ anything to use it either.
 
 ### As an npm package (not published yet)
 
-The package is prepared for npm, but v1.1.0 ships from GitHub only. An npm release is
+The package is prepared for npm, but v1.1.1 ships from GitHub only. An npm release is
 not scheduled yet. Until then, install from a clone.
 
 ```bash

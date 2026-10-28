@@ -100,7 +100,7 @@ for await (const line of input) {
     if (Buffer.byteLength(line) > 1024 * 1024) throw new Error('Request too large');
     message = JSON.parse(line);
     if (message.id === undefined) continue;
-    if (message.method === 'initialize') respond(message.id, { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'lu-agent-memory', version: '1.1.0' } });
+    if (message.method === 'initialize') respond(message.id, { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'lu-agent-memory', version: '1.1.1' } });
     else if (message.method === 'ping') respond(message.id, {});
     else if (message.method === 'tools/list') respond(message.id, { tools: [readTool, tool] });
     else if (message.method === 'tools/call' && [tool.name, readTool.name].includes(message.params?.name)) {

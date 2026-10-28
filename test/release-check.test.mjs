@@ -65,9 +65,9 @@ test('the version must appear as a changelog heading', () => {
   const changelog = '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-09-15\n\n## [0.9.0]\n';
   assert.equal(versionConsistency('1.0.0', changelog).ok, true);
   assert.deepEqual(versionConsistency('1.0.0', changelog).released, ['Unreleased', '1.0.0', '0.9.0']);
-  const missing = versionConsistency('1.1.0', changelog);
+  const missing = versionConsistency('1.1.1', changelog);
   assert.equal(missing.ok, false);
-  assert.match(missing.message, /no "## \[1\.1\.0\]" section/);
+  assert.match(missing.message, /no "## \[1\.1\.1\]" section/);
   assert.equal(versionConsistency('2.0.0', '# no headings here\n').ok, false);
 });
 

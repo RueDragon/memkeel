@@ -7,7 +7,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [1.1.0] - 2026-10-28
+## [1.1.1] - 2026-10-28
 
 ### Added
 
@@ -21,21 +21,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Malformed topic aliases no longer crash all bootstrap queries. Configuration validation
-  identifies the field, preserves valid ledger identities and previews safe alias migrations.
-- Independent Git repositories are no longer swallowed by an overly broad parent workspace
-  route. Legacy workspace history stays available through an explicit workspace query.
-- Hidden, closed, superseded and dormant task content is excluded from default summaries;
-  explicit history reads retain audit access without making historical content current.
+- Preserve millisecond precision when projecting activity with a `Date`-valued clock, preventing fast projection from hiding events that occurred in the same millisecond as the projection.
+- Use a deterministic installed PowerShell path for the Windows queue mutex helper and report helper startup failures instead of waiting through an opaque timeout.
 
 ### Release Scope
 
-- GitHub release only. This release does not publish an npm package, download embedding models,
-  rewrite historical event ownership or apply bulk historical-governance candidates.
-- Local semantic availability, host restart requirements and human-labelled retrieval-quality
-  evaluation must be reported separately from isolated test results.
+- GitHub release only. This patch does not publish npm or modify live memory homes.
 
-## [1.0.1] - 2026-10-26
+## [1.1.0] - 2026-10-28
 
 ### Added
 
@@ -696,7 +689,8 @@ and every projection is rebuilt from the event journal.
   must never be written to memory in the first place.
 - The web console binds to loopback only and has no authentication by design.
 
-[Unreleased]: https://github.com/RueDragon/memkeel/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/RueDragon/memkeel/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/RueDragon/memkeel/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/RueDragon/memkeel/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/RueDragon/memkeel/releases/tag/v1.0.1
 [1.0.0]: https://github.com/RueDragon/memkeel/releases/tag/v1.0.0
